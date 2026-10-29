@@ -1,0 +1,10 @@
+game:
+  name: "Caro_11x11"
+  board_size: 11
+  win_length: 5
+  first_player: 1  # 1: X (Đen - đi trước), -1: O (Trắng - đi sau)
+
+experiment:
+  seeds: [42, 100, 2026, 777, 999]
+  official_games_per_pair: 100
+  time_limit_per_move_sec: 1.0
