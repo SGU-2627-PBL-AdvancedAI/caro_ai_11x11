@@ -1,0 +1,5 @@
+﻿Matchup,Games,A wins,B wins,Draws,A win rate (%),B win rate (%),Draw rate (%),A Score (W + 0.5D),B Score (W + 0.5D),A Score rate (%),B Score rate (%),Avg moves,Avg A decision (ms),Avg B decision (ms)
+Random vs Random,100,54,46,0,54.0,46.0,0.0,54.0,46.0,54.0,46.0,70.36,0.0,0.0
+Rule-Based vs Rule-Based,100,0,0,100,0.0,0.0,100.0,50.0,50.0,50.0,50.0,121.0,15.406,15.412
+Random vs Rule-Based Heuristic-LookAhead,100,0,100,0,0.0,100.0,0.0,0.0,100.0,0.0,100.0,9.8,0.0,10.449
+Rule-Based Heuristic-LookAhead vs Random,100,100,0,0,100.0,0.0,0.0,100.0,0.0,100.0,0.0,9.8,10.32,0.0

@@ -1,0 +1,5 @@
+﻿matchup,games,avg_moves,avg_A_ms,avg_B_ms,avg_A_search_count,avg_B_search_count
+Random vs Random,100,70.36,0.0,0.0,1.0,1.0
+Random vs Rule-Based Heuristic-LookAhead,100,9.8,0.0,10.449,1.0,659.943
+Rule-Based Heuristic-LookAhead vs Random,100,9.8,10.32,0.0,659.771,1.0
+Rule-Based vs Rule-Based,100,121.0,15.406,15.412,715.202,715.202
