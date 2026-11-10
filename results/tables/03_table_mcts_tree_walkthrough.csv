@@ -1,0 +1,7 @@
+﻿num_rollouts_limit,actual_rollouts,root_visits,expanded_children,untried_actions_left,selected_action,selected_row,selected_col,top_branch_visits,top_branch_value,move_time_ms
+1,1,1,1,47,91,8,3,1,1.0,5.755
+5,5,5,5,43,91,8,3,1,1.0,17.159
+15,15,15,15,33,91,8,3,1,1.0,27.227
+35,35,35,35,13,91,8,3,1,1.0,65.027
+100,100,100,48,0,52,4,8,3,0.6667,195.236
+300,300,300,48,0,83,7,6,12,0.4167,607.437

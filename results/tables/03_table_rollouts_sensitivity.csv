@@ -1,0 +1,5 @@
+﻿series,agent_a,agent_b,games,wins,draws,losses,wins_as_x,wins_as_o,win_rate_pct,win_ci_low_pct,win_ci_high_pct,score_rate_pct,score_ci_low_pct,score_ci_high_pct,mean_plies,mean_move_time_ms,p95_move_time_ms,mean_rollouts_active,shortcut_or_forced_moves,num_rollouts,exploration_c,time_limit_sec,baseline_mode,baseline_name
+MCTS_N50_vs_MCTS_N30,MCTS_N50,MCTS_Baseline_N30,20,10,0,10,6,4,50.0,29.93,70.07,50.0,30.0,70.0,49.5,119.38,231.413,50.0,66,50,1.414,,mcts_30,MCTS_N30
+MCTS_N150_vs_MCTS_N30,MCTS_N150,MCTS_Baseline_N30,20,15,0,5,8,7,75.0,53.13,88.81,75.0,55.0,90.0,29.85,318.305,578.356,150.0,46,150,1.414,,mcts_30,MCTS_N30
+MCTS_N300_vs_MCTS_N30,MCTS_N300,MCTS_Baseline_N30,20,18,0,2,8,10,90.0,69.9,97.21,90.0,75.0,100.0,27.0,634.144,1185.233,300.0,36,300,1.414,,mcts_30,MCTS_N30
+MCTS_N600_vs_MCTS_N30,MCTS_N600,MCTS_Baseline_N30,20,18,0,2,9,9,90.0,69.9,97.21,90.0,75.0,100.0,18.1,1142.8,2043.036,600.0,30,600,1.414,,mcts_30,MCTS_N30

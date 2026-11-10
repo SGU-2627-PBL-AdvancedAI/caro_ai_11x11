@@ -1,0 +1,7 @@
+﻿source,chebyshev_distance,cells_in_ring,mcts_moves,mcts_share_pct,opponent_moves,opponent_share_pct
+MCTS_N600_vs_MCTS_N30,0,1,10,5.405,10,5.65
+MCTS_N600_vs_MCTS_N30,1,8,40,21.622,26,14.689
+MCTS_N600_vs_MCTS_N30,2,16,54,29.189,47,26.554
+MCTS_N600_vs_MCTS_N30,3,24,47,25.405,45,25.424
+MCTS_N600_vs_MCTS_N30,4,32,25,13.514,34,19.209
+MCTS_N600_vs_MCTS_N30,5,40,9,4.865,15,8.475
