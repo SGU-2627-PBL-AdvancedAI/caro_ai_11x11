@@ -20,14 +20,13 @@ class MinimaxAgent(BaseAgent):
         self,
         name: str = "MinimaxAgent",
         max_depth: int = 3,
-        depth: int | None = None,  # Alias hỗ trợ gọi depth hoặc max_depth
         use_alpha_beta: bool = True,
         use_move_ordering: bool = True,
         candidate_radius: int | None = 2,
         time_limit_sec: float | None = 1.0,  # Truyền None để TẮT ngắt thời gian
     ):
         super().__init__(name=name)
-        self.max_depth = depth if depth is not None else max_depth
+        self.max_depth = max_depth
         self.use_alpha_beta = use_alpha_beta
         self.use_move_ordering = use_move_ordering
         self.candidate_radius = candidate_radius
@@ -109,7 +108,7 @@ class MinimaxAgent(BaseAgent):
         )
 
         # Điều kiện dừng đệ quy
-        if depth == 0 or env.is_terminal() or is_timeout:
+        if depth <= 0 or env.is_terminal() or is_timeout:
             return evaluate_board(env, perspective)
 
         candidates = get_candidate_actions(env, radius=self.candidate_radius)
