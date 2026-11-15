@@ -1,0 +1,5 @@
+﻿exploration_c,positions,mean_move_time_ms,mean_actual_rollouts_active,mean_top_visit_share_pct,mean_visit_entropy
+0.0,8,589.914,200.0,32.43,3.3578
+0.5,8,407.153,200.0,3.14,4.4206
+1.414,8,405.815,200.0,1.71,4.4707
+3.0,8,485.039,200.0,1.57,4.4935

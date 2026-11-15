@@ -1,0 +1,5 @@
+﻿scenario,expected_action,selected_action,condition_met,search_count,last_root_is_none
+Empty board,60,60,True,0,True
+Win-in-1,59,59,True,0,True
+Block-in-1,70,70,True,0,True
+Open-3 pattern evaluation,58 or 62 has open_4 >= 1,58,True,300,False

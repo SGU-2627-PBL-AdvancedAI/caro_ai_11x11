@@ -1,0 +1,4 @@
+﻿budget_mode,positions,mean_rollouts_including_zero,mean_rollouts_active_only,shortcut_or_forced_count,mean_move_time_ms,p95_move_time_ms
+fixed_rollouts,8,218.75,250.0,1,597.483,929.214
+time_budget,8,55.88,63.86,1,132.163,152.13
+combined,8,58.5,66.86,1,132.096,152.042
