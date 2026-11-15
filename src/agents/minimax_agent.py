@@ -10,10 +10,15 @@ if TYPE_CHECKING:
     from caro_env import CaroEnv
 
 
+class _SearchTimeout(Exception):
+    """Ngoại lệ nội bộ dùng để ngắt ngay lập tức khi vượt quá time_limit_sec."""
+    pass
+
+
 class MinimaxAgent(BaseAgent):
     """
     Tác tử Cấp 3: Sử dụng thuật toán Minimax tích hợp Alpha-Beta Pruning,
-    Move Ordering, Candidate Action Pruning và Kiểm soát thời gian suy nghĩ.
+    Move Ordering, Candidate Action Pruning, Iterative Deepening và Kiểm soát thời gian.
     """
 
     def __init__(
@@ -23,7 +28,7 @@ class MinimaxAgent(BaseAgent):
         use_alpha_beta: bool = True,
         use_move_ordering: bool = True,
         candidate_radius: int | None = 2,
-        time_limit_sec: float | None = 1.0,  # Truyền None để TẮT ngắt thời gian
+        time_limit_sec: float | None = 1.0,  # Truyền None để chạy cố định ở max_depth
     ):
         super().__init__(name=name)
         self.max_depth = max_depth
@@ -35,6 +40,7 @@ class MinimaxAgent(BaseAgent):
         # Thuộc tính đo lường hiệu năng phục vụ thực nghiệm Ablation Study
         self.last_move_time_ms: float = 0.0
         self.last_search_count: int = 0
+        self.last_completed_depth: int = 0
 
     def select_action(self, env: CaroEnv) -> int:
         """
@@ -43,6 +49,7 @@ class MinimaxAgent(BaseAgent):
         """
         start_time = time.perf_counter()
         self.last_search_count = 0
+        self.last_completed_depth = 0
 
         legal_actions = env.legal_actions()
         if not legal_actions:
@@ -52,63 +59,102 @@ class MinimaxAgent(BaseAgent):
         if not candidates:
             candidates = legal_actions
 
+        perspective = env.current_player
+
+        # 1. Immediate Win Shortcut: Kiểm tra nước thắng ngay lập tức tại gốc
+        for action in candidates:
+            if evaluate_cell_threat(env, action, perspective)["is_win_5"]:
+                self.last_search_count = 1
+                self.last_completed_depth = 1
+                self.last_move_time_ms = (time.perf_counter() - start_time) * 1000.0
+                return action
+
         # Sắp xếp danh sách candidates chuẩn từ gốc nếu use_move_ordering được bật
         if self.use_move_ordering:
-            candidates = self._order_moves(env, candidates, env.current_player)
+            candidates = self._order_moves(env, candidates, perspective)
 
         best_action = candidates[0]
-        perspective = env.current_player
+
+        # Nếu tắt giới hạn thời gian (dùng cho Ablation so sánh số nút duyệt ở độ sâu cố định),
+        # chạy trực tiếp 1 lượt tại max_depth. Nếu có giới hạn thời gian, dùng Iterative Deepening.
+        start_depth = self.max_depth if self.time_limit_sec is None else 1
+
+        for current_depth in range(start_depth, self.max_depth + 1):
+            # Đưa best_action của độ sâu trước lên đầu để tối ưu cắt tỉa Alpha-Beta
+            if current_depth > start_depth and best_action in candidates:
+                ordered_candidates = [best_action] + [a for a in candidates if a != best_action]
+            else:
+                ordered_candidates = candidates
+
+            try:
+                depth_best_action = self._search_root(
+                    env=env,
+                    candidates=ordered_candidates,
+                    depth=current_depth,
+                    perspective=perspective,
+                    start_time=start_time,
+                )
+                best_action = depth_best_action
+                self.last_completed_depth = current_depth
+            except _SearchTimeout:
+                # Hủy bỏ kết quả dang dở của độ sâu bị quá giờ, giữ lại best_action của độ sâu trước
+                break
+
+        self.last_move_time_ms = (time.perf_counter() - start_time) * 1000.0
+        return best_action
+
+    def _search_root(self, env: CaroEnv, candidates: list[int], depth: int, perspective: int, start_time: float) -> int:
+        """Thực hiện tìm kiếm ở tầng gốc cho một độ sâu `depth` cụ thể."""
+        best_action = candidates[0]
         best_val = -math.inf
         alpha = -math.inf
         beta = math.inf
 
         for action in candidates:
-            # 1. Thử đánh nước đi
             env.step(action)
             self.last_search_count += 1
+            try:
+                val = self._minimax(
+                    env=env,
+                    depth=depth - 1,
+                    is_maximizing=False,
+                    alpha=alpha,
+                    beta=beta,
+                    perspective=perspective,
+                    start_time=start_time,
+                )
+            finally:
+                # Luôn hoàn tác bàn cờ kể cả khi bị ngắt bởi _SearchTimeout
+                env.undo()
 
-            # 2. Duyệt đệ quy sang lượt của đối thủ (is_maximizing=False)
-            val = self._minimax(
-                env=env,
-                depth=self.max_depth - 1,
-                is_maximizing=False,
-                alpha=alpha,
-                beta=beta,
-                perspective=perspective,
-                start_time=start_time,
-            )
-
-            # 3. Hoàn tác nước đi (backtrack)
-            env.undo()
-
-            # Giữ nguyên tiêu chí chọn nước đi đầu tiên nếu điểm hòa nhau (tie-breaking)
             if val > best_val:
                 best_val = val
                 best_action = action
 
-            # Nếu BẬT Alpha-Beta thì thực hiện cập nhật alpha và kiểm tra cắt tỉa
             if self.use_alpha_beta:
                 alpha = max(alpha, best_val)
                 if beta <= alpha:
                     break
 
-        # Ghi nhận thời gian suy nghĩ (miligiây)
-        self.last_move_time_ms = (time.perf_counter() - start_time) * 1000.0
         return best_action
 
     def _minimax(self, env: CaroEnv, depth: int, is_maximizing: bool, alpha: float, beta: float, perspective: int, start_time: float) -> float:
         """
-        Hàm đệ quy Minimax dùng chung cho cả 2 chế độ BẬT/TẮT Alpha-Beta,
-        đảm bảo 100% nhất quán về nước đi thu được.
+        Hàm đệ quy Minimax dùng chung cho cả 2 chế độ BẬT/TẮT Alpha-Beta.
         """
-        # Kiểm tra điều kiện giới hạn thời gian (chỉ kiểm tra nếu time_limit_sec được thiết lập)
-        is_timeout = (
-            self.time_limit_sec is not None
-            and (time.perf_counter() - start_time >= self.time_limit_sec)
-        )
+        if self.time_limit_sec is not None and (time.perf_counter() - start_time >= self.time_limit_sec):
+            raise _SearchTimeout()
 
-        # Điều kiện dừng đệ quy
-        if depth <= 0 or env.is_terminal() or is_timeout:
+        # Điều kiện dừng đệ quy: ưu tiên thắng sớm / thua muộn bằng cách cộng/trừ theo `depth`
+        if env.is_terminal():
+            res = env.result(perspective)
+            if res > 0:
+                return 100000.0 + depth * 100.0
+            elif res < 0:
+                return -100000.0 - depth * 100.0
+            return 0.0
+
+        if depth <= 0:
             return evaluate_board(env, perspective)
 
         candidates = get_candidate_actions(env, radius=self.candidate_radius)
@@ -125,52 +171,52 @@ class MinimaxAgent(BaseAgent):
             for action in candidates:
                 env.step(action)
                 self.last_search_count += 1
-
-                eval_score = self._minimax(
-                    env=env,
-                    depth=depth - 1,
-                    is_maximizing=False,
-                    alpha=alpha,
-                    beta=beta,
-                    perspective=perspective,
-                    start_time=start_time,
-                )
-                env.undo()
+                try:
+                    eval_score = self._minimax(
+                        env=env,
+                        depth=depth - 1,
+                        is_maximizing=False,
+                        alpha=alpha,
+                        beta=beta,
+                        perspective=perspective,
+                        start_time=start_time,
+                    )
+                finally:
+                    env.undo()
 
                 if eval_score > max_eval:
                     max_eval = eval_score
 
-                # Chỉ cắt tỉa khi cờ use_alpha_beta = True
                 if self.use_alpha_beta:
                     alpha = max(alpha, eval_score)
                     if beta <= alpha:
-                        break  # Cắt nhánh Beta
+                        break
             return max_eval
         else:
             min_eval = math.inf
             for action in candidates:
                 env.step(action)
                 self.last_search_count += 1
-
-                eval_score = self._minimax(
-                    env=env,
-                    depth=depth - 1,
-                    is_maximizing=True,
-                    alpha=alpha,
-                    beta=beta,
-                    perspective=perspective,
-                    start_time=start_time,
-                )
-                env.undo()
+                try:
+                    eval_score = self._minimax(
+                        env=env,
+                        depth=depth - 1,
+                        is_maximizing=True,
+                        alpha=alpha,
+                        beta=beta,
+                        perspective=perspective,
+                        start_time=start_time,
+                    )
+                finally:
+                    env.undo()
 
                 if eval_score < min_eval:
                     min_eval = eval_score
 
-                # Chỉ cắt tỉa khi cờ use_alpha_beta = True
                 if self.use_alpha_beta:
                     beta = min(beta, eval_score)
                     if beta <= alpha:
-                        break  # Cắt nhánh Alpha
+                        break
             return min_eval
 
     def _order_moves(self, env: CaroEnv, candidates: list[int], current_player: int) -> list[int]:
@@ -183,10 +229,8 @@ class MinimaxAgent(BaseAgent):
         for action in candidates:
             my_threat = evaluate_cell_threat(env, action, current_player)
             opp_threat = evaluate_cell_threat(env, action, opponent)
-            # Ưu tiên kết hợp giữa tấn công của mình và phòng thủ chặn đối thủ
             combined_score = my_threat["score"] + 1.2 * opp_threat["score"]
             scored_moves.append((combined_score, action))
 
-        # Sắp xếp giảm dần theo điểm số đe dọa
         scored_moves.sort(key=lambda x: x[0], reverse=True)
         return [action for _, action in scored_moves]
