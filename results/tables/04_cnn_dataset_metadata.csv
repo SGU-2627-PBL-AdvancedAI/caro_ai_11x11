@@ -1,0 +1,4 @@
+﻿Version,NPZ File (data/),CSV File (results/tables/),Split,Games,Symmetry D4,Samples (N),NPZ Key & Shape,NPZ Size (KB),CSV Size (KB)
+Version 1 (With D4 Symmetry - Train),data/04_cnn_expert_train_val_11x11.npz,results/tables/04_cnn_dataset_train_val_11x11.csv,train_aug,170,Yes (x8),11384,"X_train: (11384, 11, 11, 1), y_train: (11384,)",113.13,3128.6
+Version 1 (Unseen Games - Validation),data/04_cnn_expert_train_val_11x11.npz,results/tables/04_cnn_dataset_train_val_11x11.csv,val_unseen,30,No (x1),245,"X_val: (245, 11, 11, 1), y_val: (245,)",113.13,3128.6
+Version 2 (No D4 Symmetry - Train Ablation),data/04_cnn_expert_train_noaug_11x11.npz,results/tables/04_cnn_dataset_train_noaug_11x11.csv,train_noaug,170,No (x1),1423,"X: (1423, 11, 11, 1), y: (1423,)",13.43,384.63

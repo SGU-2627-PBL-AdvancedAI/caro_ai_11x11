@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 from pathlib import Path
 import sys
@@ -14,11 +15,11 @@ from caro_env import CaroEnv
 from heuristic import evaluate_board, evaluate_cell_threat, get_candidate_actions
 
 # Thử nạp TensorFlow/Keras (nếu môi trường đã cài đặt như trong sách AlphaGo Simplified Chương 10).
-# Nếu chưa cài đặt (ví dụ môi trường chỉ có NumPy), hệ thống tự động chuyển sang backend NumPy CNN
+# Nếu chưa cài đặt hoặc lỗi phụ thuộc (ví dụ protobuf), hệ thống tự động dùng backend NumPy CNN
 # có cùng kiến trúc toán học và định dạng trọng số tương thích hoàn toàn.
 try:
     import tensorflow as tf
-    from tensorflow.keras import layers, models, optimizers
+    from tensorflow.keras import layers, models, optimizers, regularizers
     from tensorflow.keras.utils import to_categorical as keras_to_categorical
 
     HAS_TENSORFLOW = True
@@ -27,11 +28,13 @@ except Exception:
     layers = None
     models = None
     optimizers = None
+    regularizers = None
     keras_to_categorical = None
     HAS_TENSORFLOW = False
 
 
 DEFAULT_CHECKPOINT_DIR = Path(__file__).resolve().parents[2] / "checkpoints"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
 # ==============================================================================
@@ -122,7 +125,7 @@ def expert_select_action(
       2. Chặn ngay lập tức nếu đối thủ có nước đi tạo chuỗi 5 quân.
       3. Tạo chuỗi 4 mở hai đầu (`open_4 >= 1`).
       4. Chặn nước tạo chuỗi 4 mở hai đầu của đối thủ.
-      5. Đánh giá tổng hợp công - thủ - vị trí trung tâm kết hợp kiểm tra phản đòn 1 bước.
+      5. Đánh giá tổng hợp công - thủ - vị trí trung tâm.
     """
     legal = env.legal_actions()
     if not legal:
@@ -158,7 +161,6 @@ def expert_select_action(
         if ot["is_win_5"]:
             block_win_moves.append(action)
     if block_win_moves:
-        # Nếu có nhiều ô chặn, chọn ô vừa chặn vừa có điểm tấn công cao nhất
         return int(max(block_win_moves, key=lambda a: my_threats[a]["score"] + opp_threats[a]["score"]))
 
     # Ưu tiên 3: Tạo chuỗi 4 mở 2 đầu chắc chắn thắng
@@ -245,8 +247,7 @@ def simulate_expert_vs_non_expert_game(
           + Mã hóa trạng thái bàn cờ theo góc nhìn hiện tại: `state = board * current_player`.
           + Ghi nhận cặp `(state, action)` của Expert vào tập dữ liệu huấn luyện.
       - Tại mỗi lượt của Non-Expert:
-          + Thực hiện nước đi pha trộn (50% ngẫu nhiên, 50% expert) để mở rộng không gian trạng thái,
-            nhưng KHÔNG ghi vào dữ liệu huấn luyện.
+          + Thực hiện nước đi pha trộn để mở rộng không gian trạng thái, nhưng KHÔNG ghi vào dữ liệu.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -254,7 +255,6 @@ def simulate_expert_vs_non_expert_game(
     env = CaroEnv(board_size=board_size, win_length=win_length)
     env.reset()
 
-    # Chọn ngẫu nhiên Expert đóng vai người chơi 1 (X) hoặc -1 (O)
     expert_player = 1 if int(rng.integers(0, 2)) == 1 else -1
 
     states: list[np.ndarray] = []
@@ -302,10 +302,6 @@ def generate_expert_dataset(
     """
     Sinh tập dữ liệu huấn luyện có giám sát `(X, y)` từ `num_games` ván đấu tự chơi
     giữa Expert và Non-Expert (Mục 10.1 sách AlphaGo Simplified).
-
-    Trả về:
-      - `X`: Mảng float32 kích thước `(N, board_size, board_size, 1)`
-      - `y`: Mảng int64 kích thước `(N,)` chứa nhãn hành động `0 .. board_size^2 - 1`
     """
     if num_games <= 0:
         raise ValueError("num_games phải là số nguyên dương (> 0).")
@@ -314,11 +310,15 @@ def generate_expert_dataset(
     all_states: list[np.ndarray] = []
     all_actions: list[int] = []
 
-    for _ in range(num_games):
+    # Đa dạng hóa tỷ lệ ngẫu nhiên của Non-Expert quanh mức random_prob để Expert gặp cả thế cờ công và thủ
+    prob_choices = [max(0.15, random_prob - 0.2), random_prob, min(0.85, random_prob + 0.2)]
+
+    for idx in range(num_games):
+        game_rprob = prob_choices[idx % len(prob_choices)]
         game_states, game_actions, _ = simulate_expert_vs_non_expert_game(
             board_size=board_size,
             win_length=win_length,
-            random_prob=random_prob,
+            random_prob=game_rprob,
             candidate_radius=candidate_radius,
             augment_symmetry=augment_symmetry,
             expert_agent=expert_agent,
@@ -338,38 +338,171 @@ def generate_expert_dataset(
     return X, y
 
 
+def generate_expert_train_val_datasets(
+    num_train_games: int = 170,
+    num_val_games: int = 30,
+    board_size: int = 11,
+    win_length: int = 5,
+    random_prob: float = 0.5,
+    candidate_radius: int = 2,
+    augment_train_symmetry: bool = True,
+    augment_val_symmetry: bool = False,
+    seed: int = 42,
+    save_path: str | Path | None = None,
+    load_if_exists: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Sinh (hoặc nạp lại nếu `load_if_exists=True`) tập dữ liệu Train và Validation
+    TÁCH BIỆT THEO VÁN ĐẤU (Game-Level Split) trước khi áp dụng phép biến đổi đối xứng D4.
+    Đảm bảo tuyệt đối KHÔNG rò rỉ các biến thể xoay/lật của cùng một thế cờ giữa Train và Val.
+
+    Định dạng lưu trữ khi truyền `save_path` (ví dụ `data/05_cnn_expert_train_val_11x11.npz`):
+      - `X_train`: float32, kích thước `(N_train, 11, 11, 1)` — trạng thái bàn cờ góc nhìn chuẩn hóa (+1/-1/0).
+      - `y_train`: int64, kích thước `(N_train,)` — nhãn hành động `0..120` của Expert trên tập Train.
+      - `X_val`: float32, kích thước `(N_val, 11, 11, 1)` — trạng thái bàn cờ từ các ván Validation độc lập.
+      - `y_val`: int64, kích thước `(N_val,)` — nhãn hành động `0..120` của Expert trên tập Validation.
+      - Siêu dữ liệu đi kèm: `board_size`, `win_length`, `num_train_games`, `num_val_games`,
+        `random_prob`, `augment_train_symmetry`, `augment_val_symmetry`, `seed`.
+
+    Trả về: `(X_train, y_train, X_val, y_val)`
+    """
+    if save_path is not None and load_if_exists and Path(save_path).exists():
+        X_train, y_train, X_val, y_val, _ = load_expert_train_val_datasets(save_path)
+        return X_train, y_train, X_val, y_val
+
+    X_train, y_train = generate_expert_dataset(
+        num_games=num_train_games,
+        board_size=board_size,
+        win_length=win_length,
+        random_prob=random_prob,
+        candidate_radius=candidate_radius,
+        augment_symmetry=augment_train_symmetry,
+        seed=seed,
+    )
+    X_val, y_val = generate_expert_dataset(
+        num_games=num_val_games,
+        board_size=board_size,
+        win_length=win_length,
+        random_prob=random_prob,
+        candidate_radius=candidate_radius,
+        augment_symmetry=augment_val_symmetry,
+        seed=seed + 100000,
+    )
+
+    if save_path is not None:
+        out_path = Path(save_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            out_path,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            board_size=np.array(board_size, dtype=np.int64),
+            win_length=np.array(win_length, dtype=np.int64),
+            num_train_games=np.array(num_train_games, dtype=np.int64),
+            num_val_games=np.array(num_val_games, dtype=np.int64),
+            random_prob=np.array(random_prob, dtype=np.float32),
+            augment_train_symmetry=np.array(augment_train_symmetry, dtype=np.bool_),
+            augment_val_symmetry=np.array(augment_val_symmetry, dtype=np.bool_),
+            seed=np.array(seed, dtype=np.int64),
+        )
+
+    return X_train, y_train, X_val, y_val
+
+
+def load_expert_train_val_datasets(
+    path: str | Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    """
+    Nạp lại tập dữ liệu tự sinh `(X_train, y_train, X_val, y_val, metadata)` từ file `.npz` trong thư mục `data/`.
+    """
+    in_path = Path(path)
+    if not in_path.exists():
+        raise FileNotFoundError(f"Không tìm thấy file dữ liệu tại: {in_path}")
+    with np.load(in_path, allow_pickle=False) as d:
+        X_train = np.asarray(d["X_train"], dtype=np.float32)
+        y_train = np.asarray(d["y_train"], dtype=np.int64)
+        X_val = np.asarray(d["X_val"], dtype=np.float32)
+        y_val = np.asarray(d["y_val"], dtype=np.int64)
+        meta = {
+            k: d[k].item()
+            for k in d.files
+            if k not in ("X_train", "y_train", "X_val", "y_val")
+        }
+    return X_train, y_train, X_val, y_val, meta
+
+
+def export_dataset_to_csv(
+    X: np.ndarray,
+    y: np.ndarray,
+    csv_path: str | Path,
+    split_label: str = "train",
+    board_size: int = 11,
+    append: bool = False,
+) -> Path:
+    """
+    Xuất tập dữ liệu tự sinh `(X, y)` sang định dạng bảng `.csv` (UTF-8-SIG) tại `csv_path`
+    (ví dụ: `results/tables/04_cnn_dataset_train_val_11x11.csv` hoặc `04_cnn_dataset_train_noaug_11x11.csv`).
+
+    Cấu trúc các cột trong bảng CSV:
+      - `sample_id`: Thứ tự mẫu (1..N)
+      - `split`: Nhãn phân tập (`train_aug`, `val_unseen`, hoặc `train_noaug`)
+      - `action`: Nhãn nước đi của Expert (`0..120`)
+      - `row`: Tọa độ hàng (`action // 11`)
+      - `col`: Tọa độ cột (`action % 11`)
+      - `my_stones`: Số quân của người chơi hiện tại (`+1`) trên bàn cờ
+      - `opp_stones`: Số quân của đối thủ (`-1`) trên bàn cờ
+      - `board_flat`: Chuỗi 121 giá trị trạng thái bàn cờ góc nhìn chuẩn hóa (`-1`, `0`, `1`) cách nhau bởi dấu cách
+    """
+    out_path = Path(csv_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if append and out_path.exists() else "w"
+    fieldnames = [
+        "sample_id",
+        "split",
+        "action",
+        "row",
+        "col",
+        "my_stones",
+        "opp_stones",
+        "board_flat",
+    ]
+    X_int = np.asarray(X, dtype=np.int8).reshape(-1, board_size * board_size)
+    y_int = np.asarray(y, dtype=np.int64).reshape(-1)
+
+    with out_path.open(mode, newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if mode == "w":
+            writer.writeheader()
+        for idx in range(X_int.shape[0]):
+            flat = X_int[idx]
+            act = int(y_int[idx])
+            r, c = divmod(act, board_size)
+            writer.writerow({
+                "sample_id": idx + 1,
+                "split": split_label,
+                "action": act,
+                "row": r,
+                "col": c,
+                "my_stones": int(np.sum(flat == 1)),
+                "opp_stones": int(np.sum(flat == -1)),
+                "board_flat": " ".join(str(int(v)) for v in flat),
+            })
+    return out_path
+
+
 # ==============================================================================
 # 3. KIẾN TRÚC MẠNG POLICY NETWORK (FAST & STRONG POLICY NETWORKS)
 #    (Tham khảo Mục 10.2.1 - "Train Two Policy Networks" trong sách AlphaGo Simplified)
-#
-#    - Fast Policy Network (`model_type="fast"`):
-#        Conv2D(128, (3,3), padding="same", activation="relu", input_shape=(11,11,1))
-#        -> Flatten()
-#        -> Dense(64, activation="relu")
-#        -> Dense(64, activation="relu")
-#        -> Dense(121, activation="softmax")
-#
-#    - Strong Policy Network (`model_type="strong"`):
-#        Conv2D(128, (3,3), padding="same", activation="relu", input_shape=(11,11,1))
-#        -> Flatten()
-#        -> Dense(64, activation="relu")
-#        -> Dense(64, activation="relu")
-#        -> Dense(64, activation="relu")
-#        -> Dense(121, activation="softmax")
 # ==============================================================================
 
 
 class NumpyCNNPolicyNetwork:
     """
     Triển khai mạng CNN Policy Network bằng NumPy thuần túy (Vectorized Conv2D + ReLU + Flatten
-    + Dense layers + Softmax + Categorical Cross-Entropy + Adam Optimizer).
-    Đảm bảo kiến trúc và chiều trọng số giống hệt 100% với mô hình `tensorflow.keras.Sequential`
-    trong Chương 10 sách AlphaGo Simplified:
-      - `conv_w`: (kernel_size, kernel_size, 1, conv_filters)
-      - `conv_b`: (conv_filters,)
-      - `dense_w_i`: (in_features, out_features)
-      - `dense_b_i`: (out_features,)
-    Có thể đọc/ghi trực tiếp file trọng số `.npz` dùng chung với mô hình Keras.
+    + Dense layers + Softmax + Categorical Cross-Entropy + L2 Regularization + Adam Optimizer).
+    Đảm bảo kiến trúc và chiều trọng số giống hệt 100% với mô hình `tensorflow.keras.Sequential`.
     """
 
     def __init__(
@@ -377,9 +510,10 @@ class NumpyCNNPolicyNetwork:
         board_size: int = 11,
         model_type: str = "strong",
         conv_filters: int = 128,
-        kernel_size: int = 3,
+        kernel_size: int = 5,
         dense_units: int = 64,
         learning_rate: float = 1e-3,
+        weight_decay: float = 1e-4,
         seed: int | None = 42,
     ):
         if model_type not in ("fast", "strong"):
@@ -394,9 +528,9 @@ class NumpyCNNPolicyNetwork:
         self.kernel_size = int(kernel_size)
         self.dense_units = int(dense_units)
         self.learning_rate = float(learning_rate)
+        self.weight_decay = float(weight_decay)
         self.rng = np.random.default_rng(seed)
 
-        # Khởi tạo trọng số He (Kaiming) cho các lớp ReLU và Glorot (Xavier) cho lớp Softmax
         fan_in_conv = self.kernel_size * self.kernel_size * 1
         self.conv_w = self.rng.normal(
             0.0,
@@ -440,7 +574,6 @@ class NumpyCNNPolicyNetwork:
         """
         Biến đổi im2col (trích xuất các cửa sổ trượt 2D với padding='same') cho đầu vào
         `x` có kích thước `(batch_size, H, W, 1)`.
-        Trả về tensor `(batch_size, H, W, kernel_size * kernel_size)`.
         """
         pad = self.kernel_size // 2
         x_pad = np.pad(x, ((0, 0), (pad, pad), (pad, pad), (0, 0)), mode="constant")
@@ -461,19 +594,15 @@ class NumpyCNNPolicyNetwork:
         return exp_vals / np.sum(exp_vals, axis=-1, keepdims=True)
 
     def forward(self, x: np.ndarray, return_cache: bool = False) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
-        """
-        Lan truyền tiến (Forward Pass) qua mạng CNN Policy Network:
-          Input (B, 11, 11, 1) -> Conv2D(128, 3x3, 'same', ReLU) -> Flatten
-          -> Dense(64, ReLU) x (2 hoặc 3) -> Dense(121, Softmax).
-        """
+        """Lan truyền tiến (Forward Pass) qua mạng CNN Policy Network."""
         x_arr = np.asarray(x, dtype=np.float32)
         if x_arr.ndim == 3:
             x_arr = x_arr.reshape(1, self.board_size, self.board_size, 1)
 
         bsz = x_arr.shape[0]
-        patches = self._extract_patches(x_arr)  # (B, H, W, K*K)
-        w_col = self.conv_w.reshape(-1, self.conv_filters)  # (K*K, F)
-        conv_pre = patches @ w_col + self.conv_b  # (B, H, W, F)
+        patches = self._extract_patches(x_arr)
+        w_col = self.conv_w.reshape(-1, self.conv_filters)
+        conv_pre = patches @ w_col + self.conv_b
         conv_act = np.maximum(conv_pre, 0.0)
         flat = conv_act.reshape(bsz, -1)
 
@@ -527,57 +656,51 @@ class NumpyCNNPolicyNetwork:
         v_hat = v / (1.0 - beta2**self.adam_t)
         param -= lr * m_hat / (np.sqrt(v_hat) + eps)
 
-    def train_on_batch(self, x_batch: np.ndarray, y_onehot_batch: np.ndarray, lr: float | None = None) -> tuple[float, float]:
-        """
-        Thực hiện 1 bước lan truyền tiến + lan truyền ngược (Backpropagation) và cập nhật trọng số Adam
-        với hàm mất mát Categorical Cross-Entropy:
-            L = - (1 / B) * sum(y * log(p))
-        Trả về `(loss, accuracy)` trên batch.
-        """
+    def train_on_batch(
+        self,
+        x_batch: np.ndarray,
+        y_onehot_batch: np.ndarray,
+        lr: float | None = None,
+    ) -> tuple[float, float]:
+        """Thực hiện 1 bước lan truyền tiến + ngược và cập nhật Adam với L2 weight decay."""
         use_lr = self.learning_rate if lr is None else float(lr)
         bsz = x_batch.shape[0]
         probs, cache = self.forward(x_batch, return_cache=True)
 
-        # Categorical Cross-Entropy Loss & Accuracy
         clipped_probs = np.clip(probs, 1e-7, 1.0)
         loss = float(-np.sum(y_onehot_batch * np.log(clipped_probs)) / bsz)
         preds = np.argmax(probs, axis=-1)
         targets = np.argmax(y_onehot_batch, axis=-1)
         acc = float(np.mean(preds == targets))
 
-        # Backprop qua lớp đầu ra Softmax + Cross-Entropy: dL/dlogits = (probs - y_onehot) / B
         d_logits = (probs - y_onehot_batch) / float(bsz)
 
         grad_dense_w: list[np.ndarray] = [None] * len(self.dense_weights)  # type: ignore[list-item]
         grad_dense_b: list[np.ndarray] = [None] * len(self.dense_biases)  # type: ignore[list-item]
 
-        # Lớp Dense cuối (Softmax output)
         logits_in = cache["logits_in"]
-        grad_dense_w[-1] = logits_in.T @ d_logits
+        grad_dense_w[-1] = logits_in.T @ d_logits + self.weight_decay * self.dense_weights[-1]
         grad_dense_b[-1] = np.sum(d_logits, axis=0)
         d_curr = d_logits @ self.dense_weights[-1].T
 
-        # Các lớp Dense ẩn (ReLU)
         for i in range(len(self.dense_weights) - 2, -1, -1):
             pre = cache["hidden_pres"][i]
             inp = cache["hidden_inputs"][i]
             d_pre = d_curr * (pre > 0.0)
-            grad_dense_w[i] = inp.T @ d_pre
+            grad_dense_w[i] = inp.T @ d_pre + self.weight_decay * self.dense_weights[i]
             grad_dense_b[i] = np.sum(d_pre, axis=0)
             d_curr = d_pre @ self.dense_weights[i].T
 
-        # Backprop qua Flatten và Conv2D (ReLU)
         conv_pre = cache["conv_pre"]
         d_conv_act = d_curr.reshape(conv_pre.shape)
-        d_conv_pre = d_conv_act * (conv_pre > 0.0)  # (B, H, W, F)
+        d_conv_pre = d_conv_act * (conv_pre > 0.0)
 
         patches_flat = cache["patches"].reshape(-1, self.kernel_size * self.kernel_size)
         d_conv_pre_flat = d_conv_pre.reshape(-1, self.conv_filters)
 
-        grad_conv_w = (patches_flat.T @ d_conv_pre_flat).reshape(self.conv_w.shape)
+        grad_conv_w = (patches_flat.T @ d_conv_pre_flat).reshape(self.conv_w.shape) + self.weight_decay * self.conv_w
         grad_conv_b = np.sum(d_conv_pre_flat, axis=0)
 
-        # Cập nhật trọng số bằng Adam
         self.adam_t += 1
         self._adam_step(self.conv_w, grad_conv_w, self.m_conv_w, self.v_conv_w, use_lr)
         self._adam_step(self.conv_b, grad_conv_b, self.m_conv_b, self.v_conv_b, use_lr)
@@ -606,18 +729,30 @@ class NumpyCNNPolicyNetwork:
         epochs: int = 20,
         batch_size: int = 64,
         validation_split: float = 0.1,
+        validation_data: tuple[np.ndarray, np.ndarray] | None = None,
         learning_rate: float | None = None,
         verbose: int = 1,
     ) -> dict[str, list[float]]:
         """
-        Huấn luyện mạng CNN Policy Network theo mini-batch (tương đương `model.fit(...)` trong Keras).
-        Trả về từ điển lịch sử huấn luyện `{"loss": [...], "accuracy": [...], "val_loss": [...], "val_accuracy": [...]}`.
+        Huấn luyện mạng CNN Policy Network theo mini-batch.
+        Hỗ trợ truyền `validation_data=(X_val, y_val_onehot)` tách biệt ở cấp độ ván đấu
+        để tránh rò rỉ dữ liệu đối xứng D4 giữa Train và Validation.
         """
         n_samples = X.shape[0]
         if n_samples == 0:
             raise ValueError("Tập dữ liệu huấn luyện X không được rỗng.")
 
-        if 0.0 < validation_split < 1.0 and n_samples >= 10:
+        if validation_data is not None:
+            X_train, y_train = X, y_onehot
+            X_val = np.asarray(validation_data[0], dtype=np.float32)
+            if X_val.ndim == 3:
+                X_val = X_val.reshape(-1, self.board_size, self.board_size, 1)
+            raw_y_val = np.asarray(validation_data[1])
+            if raw_y_val.ndim == 1 or (raw_y_val.ndim == 2 and raw_y_val.shape[1] == 1):
+                y_val = to_one_hot(raw_y_val.reshape(-1), num_classes=self.num_actions)
+            else:
+                y_val = raw_y_val.astype(np.float32)
+        elif 0.0 < validation_split < 1.0 and n_samples >= 10:
             val_count = max(1, int(round(n_samples * validation_split)))
             train_count = n_samples - val_count
             X_train, X_val = X[:train_count], X[train_count:]
@@ -696,6 +831,8 @@ class NumpyCNNPolicyNetwork:
         """Nạp trọng số từ dictionary `.npz` vào mạng."""
         self.conv_w = np.asarray(data["conv_w"], dtype=np.float32)
         self.conv_b = np.asarray(data["conv_b"], dtype=np.float32)
+        self.kernel_size = int(self.conv_w.shape[0])
+        self.conv_filters = int(self.conv_w.shape[3])
         num_dense = int(data["num_dense"])
         self.dense_weights = [np.asarray(data[f"dense_w_{i}"], dtype=np.float32) for i in range(num_dense)]
         self.dense_biases = [np.asarray(data[f"dense_b_{i}"], dtype=np.float32) for i in range(num_dense)]
@@ -706,15 +843,14 @@ def build_keras_policy_network(
     board_size: int = 11,
     model_type: str = "strong",
     conv_filters: int = 128,
-    kernel_size: int = 3,
+    kernel_size: int = 5,
     dense_units: int = 64,
     learning_rate: float = 1e-3,
+    weight_decay: float = 1e-4,
 ) -> Any:
     """
-    Khởi tạo mô hình CNN Policy Network bằng `tensorflow.keras.Sequential` theo đúng Mục 10.2.1
-    sách AlphaGo Simplified (Mark Liu):
-      - `fast`: 1 lớp Conv2D(128, 3x3, padding='same', relu) -> Flatten -> 2 lớp Dense(64, relu) -> Dense(121, softmax)
-      - `strong`: 1 lớp Conv2D(128, 3x3, padding='same', relu) -> Flatten -> 3 lớp Dense(64, relu) -> Dense(121, softmax)
+    Khởi tạo mô hình CNN Policy Network bằng `tensorflow.keras.Sequential` theo Mục 10.2.1
+    sách AlphaGo Simplified (Mark Liu).
     """
     if not HAS_TENSORFLOW:
         raise RuntimeError("TensorFlow/Keras chưa được cài đặt trong môi trường hiện tại.")
@@ -722,6 +858,7 @@ def build_keras_policy_network(
         raise ValueError("model_type phải là 'fast' hoặc 'strong'.")
 
     num_actions = board_size * board_size
+    reg = regularizers.l2(weight_decay) if regularizers is not None and weight_decay > 0 else None
     model = models.Sequential(name=f"caro_{board_size}x{board_size}_{model_type}_policy_net")
     model.add(layers.Input(shape=(board_size, board_size, 1)))
     model.add(
@@ -730,15 +867,16 @@ def build_keras_policy_network(
             kernel_size=(kernel_size, kernel_size),
             padding="same",
             activation="relu",
+            kernel_regularizer=reg,
             name="conv2d_feature_extractor",
         )
     )
     model.add(layers.Flatten(name="flatten_board"))
-    model.add(layers.Dense(dense_units, activation="relu", name="dense_hidden_1"))
-    model.add(layers.Dense(dense_units, activation="relu", name="dense_hidden_2"))
+    model.add(layers.Dense(dense_units, activation="relu", kernel_regularizer=reg, name="dense_hidden_1"))
+    model.add(layers.Dense(dense_units, activation="relu", kernel_regularizer=reg, name="dense_hidden_2"))
     if model_type == "strong":
-        model.add(layers.Dense(dense_units, activation="relu", name="dense_hidden_3"))
-    model.add(layers.Dense(num_actions, activation="softmax", name="policy_head_softmax"))
+        model.add(layers.Dense(dense_units, activation="relu", kernel_regularizer=reg, name="dense_hidden_3"))
+    model.add(layers.Dense(num_actions, activation="softmax", kernel_regularizer=reg, name="policy_head_softmax"))
 
     optimizer = optimizers.Adam(learning_rate=learning_rate)
     model.compile(
@@ -755,27 +893,37 @@ def build_keras_policy_network(
 # ==============================================================================
 
 
+def _fast_check_five(board: np.ndarray, r: int, c: int, player: int, win_length: int = 5) -> bool:
+    """
+    Kiểm tra siêu nhanh O(win_length) xem việc đặt quân `player` tại ô trống `(r, c)`
+    có tạo thành chuỗi >= `win_length` quân liên tiếp hay không.
+    Dùng trong bước Rollout của Mixed MCTS để tăng tốc độ mô phỏng gấp ~30 lần.
+    """
+    n = board.shape[0]
+    for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        count = 1
+        for step in range(1, win_length):
+            nr, nc = r + dr * step, c + dc * step
+            if 0 <= nr < n and 0 <= nc < n and board[nr, nc] == player:
+                count += 1
+            else:
+                break
+        for step in range(1, win_length):
+            nr, nc = r - dr * step, c - dc * step
+            if 0 <= nr < n and 0 <= nc < n and board[nr, nc] == player:
+                count += 1
+            else:
+                break
+        if count >= win_length:
+            return True
+    return False
+
+
 class CNNAgent(BaseAgent):
     """
     Tác tử Cấp 5: Mạng Nơ-ron Tích chập (Convolutional Policy Network) cho Caro 11x11.
     Xây dựng dựa trên kiến trúc Deep Learning Chương 10 ("Policy Networks in Tic Tac Toe")
-    trong sách *AlphaGo Simplified: Rule-Based AI and Deep Learning in Everyday Games* (Mark Liu):
-
-    1. **Biểu diễn trạng thái độc lập người chơi (Player-Independent Encoding)**:
-       Nhân ma trận bàn cờ `env.board` với `env.current_player` để quân của mình luôn là `+1`,
-       quân đối phương là `-1`, ô trống là `0`, đưa về tensor 4 chiều `(1, 11, 11, 1)`.
-    2. **Kiến trúc Fast & Strong Policy Network**:
-       - `Conv2D(128, kernel_size=(3,3), padding="same", activation="relu")`
-       - `Flatten()`
-       - 2 lớp `Dense(64, activation="relu")` (`model_type="fast"`) hoặc
-         3 lớp `Dense(64, activation="relu")` (`model_type="strong"`)
-       - `Dense(121, activation="softmax")` dự đoán phân phối xác suất trên 121 ô cờ.
-    3. **Hai chế độ ra quyết định**:
-       - **Pure Policy Network (`use_mix_mcts=False`)**: Dự đoán xác suất từ mạng CNN, lọc các
-         nước đi hợp lệ, chuẩn hóa tổng xác suất về 1.0 và chọn `argmax` (hoặc lấy mẫu xác suất).
-       - **Policy-Guided Mixed MCTS (`use_mix_mcts=True`)**: Kết hợp tìm kiếm cây Monte Carlo (UCT)
-         với xác suất tiên nghiệm $p_i$ từ mạng Policy Network theo công thức Mục 10.4.2 của sách:
-         $$\\text{mix\\_score}_i = v_i + C \\sqrt{\\frac{\\ln N}{n_i}} + \\gamma \\frac{p_i}{1 + n_i}$$
+    trong sách *AlphaGo Simplified: Rule-Based AI and Deep Learning in Everyday Games* (Mark Liu).
     """
 
     def __init__(
@@ -784,21 +932,23 @@ class CNNAgent(BaseAgent):
         model_type: str = "strong",
         backend: str = "auto",
         model_path: str | Path | None = None,
+        auto_load_default: bool = False,
         board_size: int = 11,
         conv_filters: int = 128,
-        kernel_size: int = 3,
+        kernel_size: int = 5,
         dense_units: int = 64,
         learning_rate: float = 1e-3,
+        weight_decay: float = 1e-4,
         deterministic: bool = True,
         temperature: float = 1.0,
         candidate_radius: int | None = 2,
         use_tactical_shortcut: bool = True,
         use_mix_mcts: bool = False,
-        num_rollouts: int = 100,
+        num_rollouts: int = 64,
         exploration_c: float = 1.414,
         gamma: float = 10.0,
-        max_rollout_steps: int = 24,
-        time_limit_sec: float | None = None,
+        max_rollout_steps: int = 20,
+        time_limit_sec: float | None = 1.0,
         seed: int | None = 42,
     ):
         super().__init__(name=name)
@@ -830,6 +980,7 @@ class CNNAgent(BaseAgent):
         self.kernel_size = int(kernel_size)
         self.dense_units = int(dense_units)
         self.learning_rate = float(learning_rate)
+        self.weight_decay = float(weight_decay)
         self.deterministic = bool(deterministic)
         self.temperature = float(temperature)
         self.candidate_radius = candidate_radius
@@ -846,7 +997,6 @@ class CNNAgent(BaseAgent):
         self.seed = seed
         self.rng = np.random.default_rng(seed)
 
-        # Khởi tạo mạng nơ-ron tích chập (duy trì đồng thời numpy_net để suy luận 1 mẫu cực nhanh < 1ms)
         self.numpy_net = NumpyCNNPolicyNetwork(
             board_size=self.board_size,
             model_type=self.model_type,
@@ -854,6 +1004,7 @@ class CNNAgent(BaseAgent):
             kernel_size=self.kernel_size,
             dense_units=self.dense_units,
             learning_rate=self.learning_rate,
+            weight_decay=self.weight_decay,
             seed=seed,
         )
         self.keras_model: Any = None
@@ -865,26 +1016,24 @@ class CNNAgent(BaseAgent):
                 kernel_size=self.kernel_size,
                 dense_units=self.dense_units,
                 learning_rate=self.learning_rate,
+                weight_decay=self.weight_decay,
             )
             self._sync_numpy_to_keras()
 
-        # Chỉ số đo đạc phục vụ Giải đấu (Tournament) và Ablation Study
+        # Chỉ số đo đạc phục vụ Giải đấu và Ablation Study
         self.last_move_time_ms: float = 0.0
         self.last_search_count: int = 0
         self.last_decision_stage: str = ""
         self.last_action_probs: np.ndarray | None = None
         self.training_history: dict[str, list[float]] = {}
 
-        # Tự động nạp trọng số nếu truyền model_path hoặc nếu có sẵn checkpoint mặc định
+        # Chỉ nạp trọng số khi người dùng truyền rõ `model_path` hoặc bật `auto_load_default=True`
         if model_path is not None:
             self.load_model(model_path)
-        else:
+        elif auto_load_default:
             default_ckpt = DEFAULT_CHECKPOINT_DIR / f"cnn_{self.model_type}_{self.board_size}x{self.board_size}.npz"
             if default_ckpt.exists():
-                try:
-                    self.load_model(default_ckpt)
-                except Exception:
-                    pass
+                self.load_model(default_ckpt)
 
     # ------------------------------------------------------------------
     # Đồng bộ trọng số giữa Keras Model và NumpyCNNPolicyNetwork
@@ -907,6 +1056,8 @@ class CNNAgent(BaseAgent):
         weights_list = self.keras_model.get_weights()
         self.numpy_net.conv_w = np.asarray(weights_list[0], dtype=np.float32)
         self.numpy_net.conv_b = np.asarray(weights_list[1], dtype=np.float32)
+        self.numpy_net.kernel_size = int(self.numpy_net.conv_w.shape[0])
+        self.numpy_net.conv_filters = int(self.numpy_net.conv_w.shape[3])
         num_dense = (len(weights_list) - 2) // 2
         self.numpy_net.dense_weights = [
             np.asarray(weights_list[2 + 2 * i], dtype=np.float32) for i in range(num_dense)
@@ -957,7 +1108,6 @@ class CNNAgent(BaseAgent):
         state_4d = self.encode_env_state(env)
         raw_probs = self.numpy_net.forward(state_4d, return_cache=False).reshape(-1)
 
-        # Áp dụng nhiệt độ (temperature scaling) nếu temperature != 1.0
         if abs(self.temperature - 1.0) > 1e-6:
             clipped = np.clip(raw_probs[valid_actions], 1e-12, 1.0)
             scaled = np.power(clipped, 1.0 / self.temperature)
@@ -969,7 +1119,6 @@ class CNNAgent(BaseAgent):
         if total > 1e-12 and np.isfinite(total):
             masked_probs[valid_actions] = (scaled / total).astype(np.float32)
         else:
-            # Fallback phân phối đều trên tập hợp lệ nếu tổng xác suất quá nhỏ
             masked_probs[valid_actions] = np.float32(1.0 / len(valid_actions))
 
         self.last_action_probs = masked_probs
@@ -990,14 +1139,12 @@ class CNNAgent(BaseAgent):
         my_threats: dict[int, dict[str, Any]] = {}
         opp_threats: dict[int, dict[str, Any]] = {}
 
-        # 1. Thắng ngay lập tức (5 quân liên tiếp)
         for action in candidates:
             mt = evaluate_cell_threat(env, action, player)
             my_threats[action] = mt
             if mt["is_win_5"]:
                 return int(action), "win_5"
 
-        # 2. Chặn nước thắng ngay của đối thủ
         block_wins: list[int] = []
         for action in candidates:
             ot = evaluate_cell_threat(env, action, opponent)
@@ -1008,13 +1155,11 @@ class CNNAgent(BaseAgent):
             best_block = max(block_wins, key=lambda a: my_threats[a]["score"] + opp_threats[a]["score"])
             return int(best_block), "block_win_5"
 
-        # 3. Tạo chuỗi 4 mở hai đầu
         open_4_moves = [a for a in candidates if my_threats[a]["open_4"] >= 1]
         if open_4_moves:
             best_o4 = max(open_4_moves, key=lambda a: my_threats[a]["score"])
             return int(best_o4), "create_open_4"
 
-        # 4. Chặn chuỗi 4 mở hai đầu của đối thủ
         block_open_4 = [a for a in candidates if opp_threats[a]["open_4"] >= 1]
         if block_open_4:
             best_bo4 = max(block_open_4, key=lambda a: opp_threats[a]["score"] + my_threats[a]["score"])
@@ -1026,27 +1171,49 @@ class CNNAgent(BaseAgent):
     # Chế độ Policy-Guided Mixed MCTS (Mục 10.4 sách AlphaGo Simplified)
     # ------------------------------------------------------------------
 
-    def _rollout_policy_game(self, sim_env: CaroEnv, root_player: int) -> float:
+    def _rollout_policy_game(self, sim_env: CaroEnv, root_player: int, root_priors: np.ndarray) -> float:
         """
-        Mô phỏng 1 ván đấu ngẫu nhiên có định hướng từ trạng thái sau khi chọn nhánh con tại gốc
-        (tương ứng hàm `one_game()` trong Mục 10.4.2 sách AlphaGo Simplified).
-        Trả về điểm kết quả theo góc nhìn của `root_player` trong đoạn `[-1.0, 1.0]`.
+        Mô phỏng 1 ván đấu tốc độ cao từ trạng thái nút con (tương ứng `one_game()` trong Mục 10.4.2):
+          - Cập nhật tập ô trống ứng viên tăng dần (incremental candidate set) quanh các quân vừa đánh.
+          - Kiểm tra thắng/chặn 5 quân cục bộ quanh 2 nước đi gần nhất bằng `_fast_check_five`.
+          - Lấy mẫu hành động có trọng số theo `root_priors` (chính sách rollout định hướng bởi CNN).
         """
         steps = 0
-        while not sim_env.is_terminal() and steps < self.max_rollout_steps:
-            cands = get_candidate_actions(sim_env, radius=1)
-            if not cands:
-                cands = sim_env.legal_actions()
+        n = sim_env.board_size
+        win_len = sim_env.win_length
+        board = sim_env.board
 
-            # Kiểm tra thắng ngay trong rollout để kết thúc sớm chính xác
+        cands_list = get_candidate_actions(sim_env, radius=1)
+        cand_set = set(cands_list)
+
+        while not sim_env.is_terminal() and steps < self.max_rollout_steps:
+            if not cand_set:
+                cand_set = set(sim_env.legal_actions())
+                if not cand_set:
+                    break
+
             cur_p = sim_env.current_player
+            opp_p = -cur_p
             win_now = None
             block_now = None
-            for a in cands:
-                if evaluate_cell_threat(sim_env, a, cur_p)["is_win_5"]:
+
+            # Chỉ kiểm tra thắng/chặn 5 quân trên các ô trống quanh 2 nước đi cuối cùng để đạt tốc độ O(1)
+            recent_moves = sim_env.history[-2:]
+            check_cells: list[int] = []
+            for rm in recent_moves:
+                rr, rc = divmod(rm, n)
+                for dr in range(-2, 3):
+                    for dc in range(-2, 3):
+                        nr, nc = rr + dr, rc + dc
+                        if 0 <= nr < n and 0 <= nc < n and board[nr, nc] == 0:
+                            check_cells.append(nr * n + nc)
+
+            for a in check_cells:
+                r, c = divmod(a, n)
+                if _fast_check_five(board, r, c, cur_p, win_len):
                     win_now = a
                     break
-                if block_now is None and evaluate_cell_threat(sim_env, a, -cur_p)["is_win_5"]:
+                if block_now is None and _fast_check_five(board, r, c, opp_p, win_len):
                     block_now = a
 
             if win_now is not None:
@@ -1054,17 +1221,36 @@ class CNNAgent(BaseAgent):
             elif block_now is not None:
                 move = block_now
             else:
-                move = int(self.rng.choice(cands))
+                c_arr = np.fromiter(cand_set, dtype=np.int64, count=len(cand_set))
+                cand_weights = root_priors[c_arr].astype(np.float64) + 0.02
+                cand_weights /= np.sum(cand_weights)
+                move = int(self.rng.choice(c_arr, p=cand_weights))
 
             sim_env.step(move)
+            cand_set.discard(move)
+            mr, mc = divmod(move, n)
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    nr, nc = mr + dr, mc + dc
+                    if 0 <= nr < n and 0 <= nc < n and board[nr, nc] == 0:
+                        cand_set.add(nr * n + nc)
             steps += 1
 
         if sim_env.is_terminal():
             return float(sim_env.result(root_player))
 
-        # Nếu chạm giới hạn bước rollout mà chưa kết thúc, dùng hàm lượng giá bàn cờ chuẩn hóa tanh
-        heuristic_val = evaluate_board(sim_env, perspective=root_player)
-        return float(math.tanh(heuristic_val / 5000.0))
+        # Đánh giá nhanh thế cờ cuối rollout dựa trên các nước đi vừa phát sinh
+        my_score = 0.0
+        opp_score = 0.0
+        opp_root = -root_player
+        for m in sim_env.history[-4:]:
+            p_m = int(board[m // n, m % n])
+            t_val = evaluate_cell_threat(sim_env, m, p_m)["score"]
+            if p_m == root_player:
+                my_score += t_val
+            elif p_m == opp_root:
+                opp_score += t_val
+        return float(math.tanh((my_score - 1.05 * opp_score) / 4000.0))
 
     def _select_action_mix_mcts(
         self,
@@ -1079,10 +1265,6 @@ class CNNAgent(BaseAgent):
 
         Công thức chọn nhánh trong mỗi lượt mô phỏng:
             mix_score_i = v_i + C * sqrt(ln(N) / n_i) + gamma * p_i / (1 + n_i)
-        Trong đó:
-            - v_i = (wins_i - losses_i) / n_i là giá trị trung bình của nước đi i
-            - p_i là xác suất tiên nghiệm dự đoán bởi mạng Strong Policy Network cho nước đi i
-            - gamma là hệ số trọng số của Policy Network (mặc định gamma = 10.0 theo sách)
         Sau khi hoàn tất các lượt rollout, chọn nước đi tối đa hóa:
             final_score_i = v_i + gamma * p_i / (1 + n_i)
         """
@@ -1091,8 +1273,7 @@ class CNNAgent(BaseAgent):
             self.last_search_count = 1
             return int(candidates[0])
 
-        # Giới hạn tập ứng viên hàng đầu theo xác suất CNN để tối ưu tốc độ MCTS trên bàn 11x11
-        max_branch = min(num_cands, 12)
+        max_branch = min(num_cands, 10)
         ranked_indices = np.argsort(prior_probs[candidates])[::-1][:max_branch]
         top_candidates = [int(candidates[idx]) for idx in ranked_indices]
         priors = np.array([float(prior_probs[a]) for a in top_candidates], dtype=np.float64)
@@ -1117,7 +1298,6 @@ class CNNAgent(BaseAgent):
                 break
 
             if rollout_idx < k:
-                # Khám phá mỗi ứng viên hàng đầu ít nhất 1 lần
                 choice_idx = rollout_idx
             else:
                 total_n = float(np.sum(visits))
@@ -1130,7 +1310,7 @@ class CNNAgent(BaseAgent):
             chosen_action = top_candidates[choice_idx]
             sim_env = env.clone()
             sim_env.step(chosen_action)
-            reward = self._rollout_policy_game(sim_env, root_player=root_player)
+            reward = self._rollout_policy_game(sim_env, root_player=root_player, root_priors=prior_probs)
 
             visits[choice_idx] += 1.0
             value_sums[choice_idx] += reward
@@ -1160,7 +1340,6 @@ class CNNAgent(BaseAgent):
             if not legal:
                 raise ValueError("Không còn nước đi hợp lệ trên bàn cờ.")
 
-            # Khai cuộc nước đầu tiên trên bàn cờ trống: đánh vào tâm (5, 5) -> action 60
             if not env.history:
                 center = env.board_size // 2
                 self.last_search_count = 1
@@ -1227,13 +1406,13 @@ class CNNAgent(BaseAgent):
         epochs: int = 20,
         batch_size: int = 64,
         validation_split: float = 0.1,
+        validation_data: tuple[np.ndarray, np.ndarray] | None = None,
         learning_rate: float | None = None,
         verbose: int = 1,
     ) -> dict[str, list[float]]:
         """
-        Huấn luyện mạng CNN Policy Network trên tập dữ liệu `(X, y)` theo Mục 10.2.1 của sách:
-          - `X`: Tensor trạng thái bàn cờ kích thước `(N, 11, 11, 1)`
-          - `y`: Mảng nhãn hành động `(N,)` hoặc ma trận one-hot `(N, 121)`
+        Huấn luyện mạng CNN Policy Network trên tập dữ liệu `(X, y)`.
+        Hỗ trợ truyền `validation_data=(X_val, y_val)` đã tách riêng theo ván đấu.
         """
         X_arr = np.asarray(X, dtype=np.float32)
         if X_arr.ndim == 3:
@@ -1250,12 +1429,23 @@ class CNNAgent(BaseAgent):
         if self.backend == "keras" and self.keras_model is not None:
             if learning_rate is not None:
                 self.keras_model.optimizer.learning_rate.assign(float(learning_rate))
+            keras_val = None
+            if validation_data is not None:
+                xv = np.asarray(validation_data[0], dtype=np.float32).reshape(-1, self.board_size, self.board_size, 1)
+                yv_raw = np.asarray(validation_data[1])
+                yv = (
+                    to_one_hot(yv_raw.reshape(-1), num_classes=self.num_actions)
+                    if yv_raw.ndim == 1
+                    else yv_raw.astype(np.float32)
+                )
+                keras_val = (xv, yv)
             fit_res = self.keras_model.fit(
                 X_arr,
                 y_onehot,
                 epochs=epochs,
                 batch_size=batch_size,
-                validation_split=validation_split if X_arr.shape[0] >= 10 else 0.0,
+                validation_split=0.0 if keras_val is not None else (validation_split if X_arr.shape[0] >= 10 else 0.0),
+                validation_data=keras_val,
                 verbose=verbose,
             )
             self._sync_keras_to_numpy()
@@ -1268,6 +1458,7 @@ class CNNAgent(BaseAgent):
             epochs=epochs,
             batch_size=batch_size,
             validation_split=validation_split,
+            validation_data=validation_data,
             learning_rate=learning_rate,
             verbose=verbose,
         )
@@ -1281,33 +1472,49 @@ class CNNAgent(BaseAgent):
         augment_symmetry: bool = True,
         epochs: int = 20,
         batch_size: int = 64,
-        validation_split: float = 0.1,
+        validation_split: float = 0.12,
         learning_rate: float | None = None,
         save_path: str | Path | None = None,
         verbose: int = 1,
     ) -> dict[str, list[float]]:
         """
-        Quy trình huấn luyện khép kín (End-to-End Pipeline) theo Chương 10 sách AlphaGo Simplified:
-          1. Sinh dữ liệu từ `num_games` ván đấu giữa Expert và Non-Expert (Mục 10.1).
-          2. Mã hóa trạng thái độc lập người chơi `(N, 11, 11, 1)` và one-hot target `(N, 121)`.
-          3. Huấn luyện mạng CNN Policy Network (Mục 10.2).
-          4. Lưu trọng số vào `save_path` (nếu được cung cấp).
+        Quy trình huấn luyện khép kín (End-to-End Pipeline) tách biệt tập Train và Validation
+        theo cấp độ ván đấu (Game-Level Split) trước khi tăng cường đối xứng D4.
         """
-        X, y = generate_expert_dataset(
-            num_games=num_games,
-            board_size=self.board_size,
-            win_length=5 if self.board_size >= 5 else self.board_size,
-            random_prob=random_prob,
-            candidate_radius=candidate_radius,
-            augment_symmetry=augment_symmetry,
-            seed=self.seed,
-        )
+        if 0.0 < validation_split < 1.0 and num_games >= 5:
+            val_games = max(1, int(round(num_games * validation_split)))
+            train_games = max(1, num_games - val_games)
+            X_train, y_train, X_val, y_val = generate_expert_train_val_datasets(
+                num_train_games=train_games,
+                num_val_games=val_games,
+                board_size=self.board_size,
+                win_length=5 if self.board_size >= 5 else self.board_size,
+                random_prob=random_prob,
+                candidate_radius=candidate_radius,
+                augment_train_symmetry=augment_symmetry,
+                augment_val_symmetry=False,
+                seed=self.seed if self.seed is not None else 42,
+            )
+            val_data: tuple[np.ndarray, np.ndarray] | None = (X_val, y_val)
+        else:
+            X_train, y_train = generate_expert_dataset(
+                num_games=num_games,
+                board_size=self.board_size,
+                win_length=5 if self.board_size >= 5 else self.board_size,
+                random_prob=random_prob,
+                candidate_radius=candidate_radius,
+                augment_symmetry=augment_symmetry,
+                seed=self.seed,
+            )
+            val_data = None
+
         history = self.train_from_dataset(
-            X=X,
-            y=y,
+            X=X_train,
+            y=y_train,
             epochs=epochs,
             batch_size=batch_size,
-            validation_split=validation_split,
+            validation_split=0.0,
+            validation_data=val_data,
             learning_rate=learning_rate,
             verbose=verbose,
         )
@@ -1316,12 +1523,7 @@ class CNNAgent(BaseAgent):
         return history
 
     def save_model(self, path: str | Path) -> Path:
-        """
-        Lưu mô hình ra đĩa.
-        - Hỗ trợ định dạng chuẩn `.npz` (tương thích đa nền tảng cho cả Keras và NumPy).
-        - Nếu đường dẫn có đuôi `.keras` hoặc `.h5` và có TensorFlow, lưu cả file Keras model
-          kèm bản sao `.npz` cùng tên.
-        """
+        """Lưu mô hình ra đĩa dưới định dạng nén `.npz` (và `.keras`/`.h5` nếu dùng Keras)."""
         out_path = Path(path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1342,9 +1544,7 @@ class CNNAgent(BaseAgent):
         return out_path
 
     def load_model(self, path: str | Path) -> None:
-        """
-        Nạp trọng số mô hình từ file `.npz`, `.keras`, hoặc `.h5`.
-        """
+        """Nạp trọng số mô hình từ file `.npz`, `.keras`, hoặc `.h5`."""
         in_path = Path(path)
         if not in_path.exists():
             raise FileNotFoundError(f"Không tìm thấy file trọng số mô hình tại: {in_path}")
@@ -1364,6 +1564,8 @@ class CNNAgent(BaseAgent):
 
         with np.load(in_path, allow_pickle=False) as data:
             self.numpy_net.set_weights_from_dict(data)
+            self.kernel_size = self.numpy_net.kernel_size
+            self.conv_filters = self.numpy_net.conv_filters
 
         if self.keras_model is not None:
             self._sync_numpy_to_keras()
@@ -1371,17 +1573,17 @@ class CNNAgent(BaseAgent):
 
 def main() -> None:
     """Giao diện dòng lệnh (CLI) hỗ trợ sinh dữ liệu, huấn luyện và kiểm thử nhanh CNNAgent."""
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(
         description="Huấn luyện và đánh giá CNN Policy Network Agent (Cấp 5) cho Caro 11x11."
     )
     parser.add_argument("--model-type", choices=["fast", "strong"], default="strong", help="Kiến trúc mạng ('fast' hoặc 'strong').")
     parser.add_argument("--backend", choices=["auto", "keras", "numpy"], default="auto", help="Backend tính toán ('auto', 'keras', 'numpy').")
-    parser.add_argument("--games", type=int, default=150, help="Số ván đấu tự chơi Expert vs Non-Expert để sinh dữ liệu.")
+    parser.add_argument("--games", type=int, default=200, help="Số ván đấu tự chơi Expert vs Non-Expert để sinh dữ liệu.")
     parser.add_argument("--epochs", type=int, default=15, help="Số epoch huấn luyện.")
-    parser.add_argument("--batch-size", type=int, default=64, help="Kích thước mini-batch.")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Tốc độ học (learning rate) cho Adam.")
+    parser.add_argument("--batch-size", type=int, default=128, help="Kích thước mini-batch.")
+    parser.add_argument("--lr", type=float, default=1.5e-3, help="Tốc độ học (learning rate) cho Adam.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed để tái lập thực nghiệm.")
     parser.add_argument(
         "--save-path",
@@ -1406,7 +1608,7 @@ def main() -> None:
         seed=args.seed,
     )
 
-    print(f"[2/3] Sinh dữ liệu từ {args.games} ván đấu Expert vs Non-Expert và huấn luyện ({args.epochs} epochs)...")
+    print(f"[2/3] Sinh dữ liệu từ {args.games} ván đấu (Game-level Train/Val split) và huấn luyện ({args.epochs} epochs)...")
     history = agent.train_self_play(
         num_games=args.games,
         epochs=args.epochs,
@@ -1416,7 +1618,8 @@ def main() -> None:
         verbose=1,
     )
     final_acc = history["accuracy"][-1] if history.get("accuracy") else 0.0
-    print(f"[3/3] Hoàn tất! Độ chính xác tập huấn luyện cuối cùng: {final_acc:.4f}. Đã lưu tại: {save_target}")
+    val_acc = history["val_accuracy"][-1] if history.get("val_accuracy") else 0.0
+    print(f"[3/3] Hoàn tất! Train Acc: {final_acc:.4f} | Val Acc (Unseen Games): {val_acc:.4f}. Đã lưu tại: {save_target}")
 
 
 if __name__ == "__main__":

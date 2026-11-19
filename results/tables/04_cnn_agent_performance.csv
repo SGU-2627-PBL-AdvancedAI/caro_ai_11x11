@@ -1,6 +1,6 @@
 ﻿matchup,games,avg_moves,avg_A_ms,avg_B_ms,avg_A_search_count,avg_B_search_count
-1. CNN Strong Policy vs Random,40,12.9,1.158,0.018,25.258,1.0
-2. CNN Fast Policy vs Non-Expert (50%),40,20.15,1.224,0.388,20.95,48.833
-3. CNN Strong Policy vs Non-Expert (50%),40,18.825,1.124,0.368,20.653,47.498
-4. CNN Strong Policy vs CNN Fast Policy,40,46.825,1.503,1.474,15.837,17.824
-5. CNN Strong + Mixed MCTS vs CNN Strong Policy,40,54.675,123.462,1.475,32.237,19.745
+1. Strong Pure CNN (No Tactical) vs Random,100,17.17,0.516,0.012,1.0,1.0
+2. Fast Hybrid CNN vs Non-Expert (50%),100,19.81,0.689,0.253,22.135,52.653
+3. Strong Hybrid CNN vs Non-Expert (50%),100,20.59,0.67,0.242,23.56,53.143
+4. Strong Hybrid CNN vs Fast Hybrid CNN,100,52.84,0.765,0.78,21.256,19.874
+5. Strong CNN + Mixed MCTS vs Strong Hybrid CNN,100,45.21,31.473,0.964,37.817,23.709
