@@ -1,0 +1,88 @@
+# configs/rl_config.yaml
+
+experiment:
+  seed: 42
+  device: "auto"                  # "auto" -> ưu tiên cuda trên Colab, fallback cpu ở local
+  resume: true                   # true để nạp *_latest.pt học tiếp khi Colab ngắt kết nối
+
+env:
+  board_size: 11
+  win_length: 5
+
+model:
+  in_channels: 3                  # [quân mình, quân đối thủ, ô trống]
+  conv_channels: [64, 64, 128]
+  num_actions: 121                # 11 * 11
+
+training:
+  use_double_dqn: true            # Dùng online_net chọn action, target_net đánh giá Q
+  use_symmetry_augmentation: true # Nhân 8 mẫu trải nghiệm bằng 4 góc xoay x 2 chiều lật
+  gamma: 0.99                     # Hệ số chiết khấu tương lai
+  learning_rate: 0.0005           # Mặc định cho Adam (ghi đè riêng theo từng stage bên dưới)
+  batch_size: 64
+  replay_capacity: 80000          # Tăng dung lượng vì có 8x symmetry augmentation
+  min_replay_size: 2000           # Đợi đủ mẫu trong buffer mới bắt đầu cập nhật mạng
+  target_update_freq: 500         # Chép trọng số sang target_net sau mỗi N bước học
+  grad_clip_norm: 1.0             # Chống bùng nổ gradient
+
+exploration:
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay: 0.999            # Giảm theo episode: eps = max(end, eps * decay)
+  candidate_radius: 2             # Chỉ random trong bán kính 2 quanh các quân đã đánh
+
+reward_shaping:
+  enabled: true                   # Đổi sang false (giữ nguyên seed) để chạy Ablation 1
+  win: 1.0
+  loss: -1.0
+  draw: 0.0
+  step_penalty: -0.005            # Phạt nhẹ mỗi bước để ưu tiên kết thúc ván sớm
+  create_open_3: 0.05
+  create_half_open_4: 0.08
+  create_open_4: 0.15
+  block_opp_open_3: 0.04
+  block_opp_4: 0.12
+  shaping_clip: 0.3               # Trần điểm thưởng phụ mỗi bước để không lấn át win/loss
+
+curriculum:
+  eval_every: 200                 # Sát hạch định kỳ sau mỗi N episode
+  eval_games: 40                  # 20 ván đi trước (X) + 20 ván đi sau (O)
+  save_every: 500                 # Lưu mốc *_ep{episode}.pt dự phòng
+  stages:
+    - name: "06_vs_lv1"
+      opponent: "lv1"
+      opponent_random_prob: 1.0
+      episodes: 3000
+      epsilon_start: 1.0
+      learning_rate: 0.0005
+      init_weights: null
+
+    - name: "06_vs_lv2_soft"
+      opponent: "lv2"
+      opponent_random_prob: 0.35  # Cấp 2 đánh random 35% số nước -> tạo bậc thang cho AI có ván thắng
+      episodes: 3500
+      epsilon_start: 0.7
+      learning_rate: 0.0003
+      init_weights: "checkpoints/06_vs_lv1_best.pt"
+
+    - name: "06_vs_lv2"
+      opponent: "lv2"
+      opponent_random_prob: 0.0   # Cấp 2 thuần 100%
+      episodes: 4000
+      epsilon_start: 0.4
+      learning_rate: 0.0002
+      init_weights: "checkpoints/06_vs_lv2_soft_best.pt"
+
+    - name: "06_selfplay"
+      opponent: "selfplay"
+      opponent_random_prob: 0.0
+      episodes: 3000
+      epsilon_start: 0.3
+      learning_rate: 0.0001
+      init_weights: "checkpoints/06_vs_lv2_best.pt"
+
+paths:
+  checkpoint_dir: "checkpoints"
+  tables_dir: "results/tables"
+  figures_dir: "results/figures"
+  best_model_path: "checkpoints/06_rl_best.pt"
