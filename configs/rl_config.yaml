@@ -1,0 +1,103 @@
+# configs/rl_config.yaml
+
+experiment:
+  seed: 42
+  device: "auto"                  # "auto" -> ưu tiên cuda trên Colab, fallback cpu ở local
+  resume: true                   # true để nạp *_latest.pt học tiếp khi Colab ngắt kết nối
+
+env:
+  board_size: 11
+  win_length: 5
+
+model:
+  in_channels: 3                  # [quân mình, quân đối thủ, ô trống]
+  conv_channels: [64, 64, 128]
+  num_actions: 121                # 11 * 11
+
+training:
+  use_double_dqn: true            # Dùng online_net chọn action, target_net đánh giá Q
+  use_symmetry_augmentation: true # Tăng cường 8x đối xứng D4 on-the-fly lúc sample (tiết kiệm 8x RAM)
+  gamma: 0.99                     # Hệ số chiết khấu tương lai
+  learning_rate: 0.0005           # Mặc định cho AdamW (ghi đè riêng theo từng stage bên dưới)
+  weight_decay: 0.0001            # Regularization nhẹ cho AdamW
+  batch_size: 64
+  train_freq: 4                   # Cập nhật mạng mỗi N bước đi (giảm tương quan & tăng tốc 3-4x)
+  replay_capacity: 80000          # Chứa trọn 80,000 bước gốc (= 640,000 mẫu đối xứng nhờ on-the-fly D4)
+  min_replay_size: 2000           # Đợi đủ mẫu trong buffer mới bắt đầu cập nhật mạng
+  terminal_sample_ratio: 0.15     # Dành 15% batch ưu tiên lấy mẫu kết thúc ván (thắng/thua/hòa)
+  tau: 0.005                      # Soft Target Update (Polyak); đặt <= 0 để dùng hard update
+  target_update_freq: 500         # Dùng khi tau <= 0
+  grad_clip_norm: 1.0             # Chống bùng nổ gradient
+  use_amp: true                   # Tự động bật Mixed Precision khi chạy GPU CUDA (bỏ qua trên CPU)
+  train_random_opening_prob: 0.5  # 50% ván train mở màn ngẫu nhiên 2 nước vùng trung tâm
+  selfplay_lv2_mix_prob: 0.25     # 25% ván trong selfplay đấu Cấp 2 để chống quên (catastrophic forgetting)
+  selfplay_pool_size: 6           # Số snapshot lưu trong Opponent Pool cho selfplay
+
+exploration:
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay: 0.999            # Dự phòng nếu không dùng epsilon_decay_fraction
+  epsilon_decay_fraction: 0.8     # Tự động tính decay để chạm epsilon_end ở 80% số episode của mỗi stage
+  candidate_radius: 2             # Ưu tiên random trong bán kính 2 quanh các quân đã đánh
+  full_board_explore_prob: 0.1    # 10% bước random khám phá toàn bàn để tránh Q-value ảo ở ô rìa
+
+reward_shaping:
+  enabled: true                   # Đổi sang false (giữ nguyên seed) để chạy Ablation 1
+  win: 1.0
+  loss: -1.0
+  draw: 0.0
+  step_penalty: -0.005            # Phạt nhẹ mỗi bước để ưu tiên kết thúc ván sớm
+  create_open_3: 0.05
+  create_half_open_4: 0.08
+  create_open_4: 0.15
+  block_opp_open_3: 0.04
+  block_opp_4: 0.12
+  shaping_clip: 0.3               # Trần điểm thưởng phụ mỗi bước để không lấn át win/loss
+
+curriculum:
+  eval_every: 200                 # Sát hạch định kỳ sau mỗi N episode
+  eval_games: 40                  # 20 ván đi trước (X) + 20 ván đi sau (O)
+  save_every: 0                   # 0 = không lưu mốc *_ep{episode}.pt định kỳ để tránh phình thư mục checkpoints/
+  keep_latest_after_finish: false # Tự động xóa *_latest.pt sau khi chạy xong chặng (chỉ giữ *_best.pt)
+  stages:
+    - name: "06_vs_lv1"
+      opponent: "lv1"
+      opponent_random_prob: 1.0
+      episodes: 3000
+      epsilon_start: 1.0
+      learning_rate: 0.0005
+      shaping_scale: 1.0          # Dùng 100% reward shaping ở giai đoạn làm quen
+      init_weights: null
+
+    - name: "06_vs_lv2_soft"
+      opponent: "lv2"
+      opponent_random_prob: 0.35  # Cấp 2 đánh random 35% số nước -> tạo bậc thang cho AI có ván thắng
+      episodes: 3500
+      epsilon_start: 0.7
+      learning_rate: 0.0003
+      shaping_scale: 0.6          # Giảm dần shaping để ưu tiên mục tiêu thắng ván
+      init_weights: "checkpoints/06_vs_lv1_best.pt"
+
+    - name: "06_vs_lv2"
+      opponent: "lv2"
+      opponent_random_prob: 0.0   # Cấp 2 thuần 100%
+      episodes: 4000
+      epsilon_start: 0.4
+      learning_rate: 0.0002
+      shaping_scale: 0.25         # Giữ shaping nhẹ tránh reward hacking
+      init_weights: "checkpoints/06_vs_lv2_soft_best.pt"
+
+    - name: "06_selfplay"
+      opponent: "selfplay"
+      opponent_random_prob: 0.0
+      episodes: 3000
+      epsilon_start: 0.3
+      learning_rate: 0.0001
+      shaping_scale: 0.0          # Tắt shaping ở self-play để tối ưu thuần tỷ lệ thắng
+      init_weights: "checkpoints/06_vs_lv2_best.pt"
+
+paths:
+  checkpoint_dir: "checkpoints"
+  tables_dir: "results/tables"
+  figures_dir: "results/figures"
+  best_model_path: "checkpoints/06_rl_best.pt"
