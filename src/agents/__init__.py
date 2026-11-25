@@ -1,4 +1,4 @@
-"""Gói chứa lớp cơ sở và đầy đủ 6 cấp tác tử AI cho Caro 11x11."""
+"""Gói chứa lớp cơ sở và đầy đủ 7 cấp tác tử AI cho Caro 11x11 (Cấp 1–6 + Cấp 7 Bonus AlphaGo)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from .base_agent import BaseAgent
 
 if TYPE_CHECKING:
+    from .alphago_agent import AlphaGoAgent
     from .cnn_agent import CNNAgent
     from .mcts_agent import MCTSAgent
     from .minimax_agent import MinimaxAgent
@@ -23,6 +24,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "MCTSAgent": (".mcts_agent", "MCTSAgent"),
     "CNNAgent": (".cnn_agent", "CNNAgent"),
     "RLAgent": (".rl_agent", "RLAgent"),
+    "AlphaGoAgent": (".alphago_agent", "AlphaGoAgent"),
 }
 
 __all__ = [
@@ -34,7 +36,7 @@ __all__ = [
     "CNNAgent",
 ]
 if find_spec("torch") is not None:
-    __all__.append("RLAgent")
+    __all__.extend(["RLAgent", "AlphaGoAgent"])
 
 
 def __getattr__(name: str) -> Any:
@@ -44,9 +46,9 @@ def __getattr__(name: str) -> Any:
         try:
             module = import_module(module_name, package=__name__)
         except ModuleNotFoundError as exc:
-            if name == "RLAgent" and exc.name == "torch":
+            if name in ("RLAgent", "AlphaGoAgent") and exc.name == "torch":
                 raise ImportError(
-                    "RLAgent yêu cầu PyTorch (`torch`). Hãy cài đặt PyTorch trước khi sử dụng Cấp 6."
+                    f"{name} yêu cầu PyTorch (`torch`). Hãy cài đặt PyTorch trước khi sử dụng."
                 ) from exc
             raise
         value = getattr(module, attr_name)
