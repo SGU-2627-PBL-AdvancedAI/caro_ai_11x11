@@ -10,8 +10,11 @@ env:
   win_length: 5
 
 model:
-  in_channels: 3                  # [quân mình, quân đối thủ, ô trống]
-  conv_channels: [64, 64, 128]
+  in_channels: 4                  # [quân mình, quân đối thủ, ô trống, nước đi vừa đánh]
+  conv_channels: [48]             # Số kênh trong tháp Residual (3 blocks -> trường nhìn 15x15)
+  use_residual: true              # Kiến trúc 6A: Residual Conv + GroupNorm + Masked Dueling Mean
+  num_res_blocks: 3
+  norm_type: "group"              # GroupNorm ổn định tuyệt đối dưới Polyak soft target update
   num_actions: 121                # 11 * 11
 
 training:
@@ -42,11 +45,13 @@ exploration:
   full_board_explore_prob: 0.1    # 10% bước random khám phá toàn bàn để tránh Q-value ảo ở ô rìa
 
 reward_shaping:
-  enabled: true                   # Đổi sang false (giữ nguyên seed) để chạy Ablation 1
+  enabled: false                  # Mặc định dùng sparse reward (+1/0/-1) chống reward hacking; bật mode='potential' cho Ablation
+  mode: "none"                    # "none" (sparse thuần) | "potential" (Ng-Harada-Russell Phi(s))
+  potential_weight: 0.05
   win: 1.0
   loss: -1.0
   draw: 0.0
-  step_penalty: -0.005            # Phạt nhẹ mỗi bước để ưu tiên kết thúc ván sớm
+  step_penalty: -0.002            # Phạt rất nhẹ mỗi bước để ưu tiên kết thúc ván sớm
   create_open_3: 0.05
   create_half_open_4: 0.08
   create_open_4: 0.15
