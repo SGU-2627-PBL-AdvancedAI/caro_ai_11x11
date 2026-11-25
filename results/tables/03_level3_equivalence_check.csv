@@ -1,0 +1,7 @@
+﻿board,depth,action_AB,action_NoAB,exact_match,nodes_AB_TT,nodes_NoAB,reduction_x,time_AB_ms,time_NoAB_ms
+TC1_Center,2,49,49,True,76,840,11.05,12.54,71.85
+TC2_Block3,2,50,50,True,130,1988,15.29,26.63,222.88
+TC3_Attack3,2,59,59,True,126,1897,15.06,23.13,196.08
+TC4_Corner,2,23,23,True,56,237,4.23,6.39,21.41
+TC5_Diagonal,2,24,24,True,146,2633,18.03,32.27,335.7
+TC6_Complex_r1,3,58,58,True,630,14126,22.42,73.54,2018.45

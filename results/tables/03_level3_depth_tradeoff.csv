@@ -1,0 +1,5 @@
+﻿max_depth,completed_depth,selected,nodes,tt_hits,time_ms,stage
+2,2,39,57,0,11.95,Search: depth 2
+3,3,39,191,1,38.86,Search: depth 3
+4,4,39,502,31,113.85,Search: depth 4
+5,5,39,1476,60,294.15,Search: depth 5

@@ -1,0 +1,133 @@
+{
+  "mode": "default_config",
+  "games_per_pair": 4,
+  "total_pairs": 21,
+  "total_games": 84,
+  "time_budget_sec": null,
+  "seeds": [
+    42,
+    102,
+    202,
+    302,
+    402
+  ],
+  "opening_book_size": 20,
+  "elapsed_sec": 277.14,
+  "peak_rss_mb": 347.01,
+  "overall_first_player": {
+    "x_wins": 47,
+    "o_wins": 34,
+    "draws": 3,
+    "x_score_pct": 57.74,
+    "x_score_wilson_ci95": [
+      47.06,
+      67.74
+    ],
+    "x_minus_o_win_pp": 15.48
+  },
+  "game_spec": {
+    "game_name": "Caro / Free Gomoku 11x11",
+    "engine_version": "CaroEnv v1.0",
+    "board_size": 11,
+    "win_length": 5,
+    "first_player": "X (1)",
+    "second_player": "O (-1)",
+    "overline_rule": "Free Gomoku (>= 5 liên tiếp là thắng, không cấm quá 5, không luật chặn 2 đầu)",
+    "observability": "Full observability, zero-sum, turn-based",
+    "draw_condition": "Bàn cờ đầy 121 nước không có bên nào đủ 5 quân liên tiếp"
+  },
+  "hardware": {
+    "timestamp_utc": "2026-11-25T21:50:53.129150+00:00",
+    "os": "Windows 10 (AMD64)",
+    "processor": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "cpu_cores_logical": 20,
+    "python_version": "3.11.9",
+    "numpy_version": "2.4.6",
+    "pandas_version": "3.1.1",
+    "torch_version": "2.15.0+cpu",
+    "compute_device": "CPU-only",
+    "vram_total_mb": 0.0,
+    "process_rss_mb": 337.69
+  },
+  "agents": [
+    {
+      "agent_id": "L1_Random",
+      "level": 1,
+      "config_summary": "Uniform random over all legal moves",
+      "budget_note": "O(1) single-step (<0.05 ms)",
+      "checkpoint_mb": 0.0,
+      "train_time_sec": 0.0
+    },
+    {
+      "agent_id": "L2_RuleBased",
+      "level": 2,
+      "config_summary": "7-tier rules + 3-ply look-ahead (root_width=14, eps=1.5)",
+      "budget_note": "Fixed 3-ply shallow look-ahead (~5–15 ms)",
+      "checkpoint_mb": 0.0,
+      "train_time_sec": 0.0
+    },
+    {
+      "agent_id": "L3_Minimax",
+      "level": 3,
+      "config_summary": "Default Alpha-Beta + TT + Killer (d=3, K=16/12, cap=1.0s)",
+      "budget_note": "Default depth=3 (K=16/12)",
+      "checkpoint_mb": 0.0,
+      "train_time_sec": 0.0
+    },
+    {
+      "agent_id": "L4_MCTS",
+      "level": 4,
+      "config_summary": "Default UCT + Heavy Playout + PW (300 rollouts, C=1.414)",
+      "budget_note": "Default 300 rollouts/move",
+      "checkpoint_mb": 0.0,
+      "train_time_sec": 0.0
+    },
+    {
+      "agent_id": "L5_CNN",
+      "level": 5,
+      "config_summary": "4-ch ResNet-4x64 Policy + Tactical Shortcut (no tree search)",
+      "budget_note": "1 forward pass (~1.5 ms/move)",
+      "checkpoint_mb": 1.168,
+      "train_time_sec": 185.0
+    },
+    {
+      "agent_id": "L6_RL",
+      "level": 6,
+      "config_summary": "4-ch ResGN-3x48 Masked Dueling DQN (Boltzmann-DQfD, eps=0)",
+      "budget_note": "1 forward pass (~1.0 ms/move)",
+      "checkpoint_mb": 0.62,
+      "train_time_sec": 449.3
+    },
+    {
+      "agent_id": "L7_AlphaGo",
+      "level": 7,
+      "config_summary": "Default Ensemble Prior (5B+6A) + PUCT (200 sims, cap=0.5s)",
+      "budget_note": "Default 200 sims / 0.5s cap",
+      "checkpoint_mb": 1.789,
+      "train_time_sec": 634.3
+    }
+  ],
+  "pair_log_files": {
+    "L1_Random_vs_L2_RuleBased": "results\\logs\\tournament\\default_config\\L1_Random_vs_L2_RuleBased.jsonl",
+    "L1_Random_vs_L3_Minimax": "results\\logs\\tournament\\default_config\\L1_Random_vs_L3_Minimax.jsonl",
+    "L1_Random_vs_L4_MCTS": "results\\logs\\tournament\\default_config\\L1_Random_vs_L4_MCTS.jsonl",
+    "L1_Random_vs_L5_CNN": "results\\logs\\tournament\\default_config\\L1_Random_vs_L5_CNN.jsonl",
+    "L1_Random_vs_L6_RL": "results\\logs\\tournament\\default_config\\L1_Random_vs_L6_RL.jsonl",
+    "L1_Random_vs_L7_AlphaGo": "results\\logs\\tournament\\default_config\\L1_Random_vs_L7_AlphaGo.jsonl",
+    "L2_RuleBased_vs_L3_Minimax": "results\\logs\\tournament\\default_config\\L2_RuleBased_vs_L3_Minimax.jsonl",
+    "L2_RuleBased_vs_L4_MCTS": "results\\logs\\tournament\\default_config\\L2_RuleBased_vs_L4_MCTS.jsonl",
+    "L2_RuleBased_vs_L5_CNN": "results\\logs\\tournament\\default_config\\L2_RuleBased_vs_L5_CNN.jsonl",
+    "L2_RuleBased_vs_L6_RL": "results\\logs\\tournament\\default_config\\L2_RuleBased_vs_L6_RL.jsonl",
+    "L2_RuleBased_vs_L7_AlphaGo": "results\\logs\\tournament\\default_config\\L2_RuleBased_vs_L7_AlphaGo.jsonl",
+    "L3_Minimax_vs_L4_MCTS": "results\\logs\\tournament\\default_config\\L3_Minimax_vs_L4_MCTS.jsonl",
+    "L3_Minimax_vs_L5_CNN": "results\\logs\\tournament\\default_config\\L3_Minimax_vs_L5_CNN.jsonl",
+    "L3_Minimax_vs_L6_RL": "results\\logs\\tournament\\default_config\\L3_Minimax_vs_L6_RL.jsonl",
+    "L3_Minimax_vs_L7_AlphaGo": "results\\logs\\tournament\\default_config\\L3_Minimax_vs_L7_AlphaGo.jsonl",
+    "L4_MCTS_vs_L5_CNN": "results\\logs\\tournament\\default_config\\L4_MCTS_vs_L5_CNN.jsonl",
+    "L4_MCTS_vs_L6_RL": "results\\logs\\tournament\\default_config\\L4_MCTS_vs_L6_RL.jsonl",
+    "L4_MCTS_vs_L7_AlphaGo": "results\\logs\\tournament\\default_config\\L4_MCTS_vs_L7_AlphaGo.jsonl",
+    "L5_CNN_vs_L6_RL": "results\\logs\\tournament\\default_config\\L5_CNN_vs_L6_RL.jsonl",
+    "L5_CNN_vs_L7_AlphaGo": "results\\logs\\tournament\\default_config\\L5_CNN_vs_L7_AlphaGo.jsonl",
+    "L6_RL_vs_L7_AlphaGo": "results\\logs\\tournament\\default_config\\L6_RL_vs_L7_AlphaGo.jsonl"
+  }
+}

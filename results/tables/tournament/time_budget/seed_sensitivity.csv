@@ -1,0 +1,15 @@
+﻿mode,agent_id,seed,games,score_pct
+time_budget,L1_Random,42,12,0.0
+time_budget,L1_Random,102,12,0.0
+time_budget,L2_RuleBased,42,12,62.5
+time_budget,L2_RuleBased,102,12,75.0
+time_budget,L3_Minimax,42,12,91.67
+time_budget,L3_Minimax,102,12,79.17
+time_budget,L4_MCTS,42,12,75.0
+time_budget,L4_MCTS,102,12,58.33
+time_budget,L5_CNN,42,12,54.17
+time_budget,L5_CNN,102,12,54.17
+time_budget,L6_RL,42,12,16.67
+time_budget,L6_RL,102,12,25.0
+time_budget,L7_AlphaGo,42,12,50.0
+time_budget,L7_AlphaGo,102,12,58.33

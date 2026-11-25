@@ -1,0 +1,9 @@
+﻿mode,agent_id,games_as_X,score_as_X_pct,games_as_O,score_as_O_pct,delta_X_minus_O_pp
+time_budget,L1_Random,12,0.0,12,0.0,0.0
+time_budget,L2_RuleBased,12,87.5,12,50.0,37.5
+time_budget,L3_Minimax,12,100.0,12,70.83,29.17
+time_budget,L4_MCTS,12,79.17,12,54.17,25.0
+time_budget,L5_CNN,12,70.83,12,37.5,33.33
+time_budget,L6_RL,12,25.0,12,16.67,8.33
+time_budget,L7_AlphaGo,12,70.83,12,37.5,33.33
+time_budget,ALL_GAMES_OVERALL,84,61.9,84,38.1,23.81

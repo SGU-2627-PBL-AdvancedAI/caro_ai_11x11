@@ -1,0 +1,8 @@
+﻿Cấp,Agent ID,Ngân sách [time_budget],Cấu hình [time_budget],Ngân sách [default_config],Cấu hình [default_config],Train Time (s),Checkpoint (MB)
+1,L1_Random,O(1) single-step (<0.05 ms),Uniform random over all legal moves,O(1) single-step (<0.05 ms),Uniform random over all legal moves,0.0,0.0
+2,L2_RuleBased,Fixed 3-ply shallow look-ahead (~5–15 ms),"7-tier rules + 3-ply look-ahead (root_width=14, eps=1.5)",Fixed 3-ply shallow look-ahead (~5–15 ms),"7-tier rules + 3-ply look-ahead (root_width=14, eps=1.5)",0.0,0.0
+3,L3_Minimax,Time budget = 200 ms/move,"ID Alpha-Beta + TT + Killer (cap d=4, K=14/10, time=200ms)",Default depth=3 (K=16/12),"Default Alpha-Beta + TT + Killer (d=3, K=16/12, cap=1.0s)",0.0,0.0
+4,L4_MCTS,Time budget = 200 ms/move,"UCT + Heavy Playout + PW (C=1.414, time=200ms)",Default 300 rollouts/move,"Default UCT + Heavy Playout + PW (300 rollouts, C=1.414)",0.0,0.0
+5,L5_CNN,1 forward pass (~1.5 ms/move),4-ch ResNet-4x64 Policy + Tactical Shortcut (no tree search),1 forward pass (~1.5 ms/move),4-ch ResNet-4x64 Policy + Tactical Shortcut (no tree search),185.0,1.168
+6,L6_RL,1 forward pass (~1.0 ms/move),"4-ch ResGN-3x48 Masked Dueling DQN (Boltzmann-DQfD, eps=0)",1 forward pass (~1.0 ms/move),"4-ch ResGN-3x48 Masked Dueling DQN (Boltzmann-DQfD, eps=0)",449.3,0.62
+7,L7_AlphaGo,Time budget = 200 ms/move,Ensemble Prior (5B+6A) + PUCT + Value Blend 0.25 (time=200ms),Default 200 sims / 0.5s cap,"Default Ensemble Prior (5B+6A) + PUCT (200 sims, cap=0.5s)",634.3,1.789

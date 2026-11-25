@@ -1,0 +1,4 @@
+﻿mode,matchup,agent_a,agent_b,games,wins_a,draws,losses_a,win_rate_a_pct,draw_rate_pct,loss_rate_a_pct,score_a_pct,wilson_ci95_low,wilson_ci95_high,bootstrap_ci95_low,bootstrap_ci95_high,score_a_as_X_pct,score_a_as_O_pct,x_win_overall_pct,o_win_overall_pct,seed_count,seed_std_pp,avg_moves,avg_ms_a,p95_ms_a,avg_search_a,avg_ms_b,p95_ms_b,avg_search_b,total_duration_sec,search_depth
+ablation,Minimax_d2_vs_L2_RuleBased,Minimax_d2,L2_RuleBased,4,2,0,2,50.0,0.0,50.0,50.0,15.0,85.0,0.0,100.0,100.0,0.0,100.0,0.0,2,0.0,27.5,16.937,35.856,69.3,17.406,70.638,499.39,1.82,2
+ablation,Minimax_d3_vs_L2_RuleBased,Minimax_d3,L2_RuleBased,4,2,0,2,50.0,0.0,50.0,50.0,15.0,85.0,0.0,100.0,50.0,50.0,50.0,50.0,2,70.71,40.0,65.523,116.729,288.35,30.121,71.094,877.5,7.47,3
+ablation,Minimax_d4_vs_L2_RuleBased,Minimax_d4,L2_RuleBased,4,2,1,1,50.0,25.0,25.0,62.5,21.94,90.81,25.0,100.0,100.0,25.0,75.0,0.0,2,17.68,48.0,113.648,224.618,443.49,25.557,66.168,548.54,13.09,4
