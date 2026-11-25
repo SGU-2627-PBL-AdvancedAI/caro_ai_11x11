@@ -61,7 +61,7 @@ def _compute_state_hash(
 
 
 class AlphaGoNode:
-    """Nút trong cây tìm kiếm PUCT-MCTS của tác tử Cấp 7A (Hybrid AlphaGo)."""
+    """Nút trong cây tìm kiếm PUCT-MCTS của tác tử Cấp 7 (Hybrid AlphaGo)."""
 
     __slots__ = (
         "parent",
@@ -123,12 +123,12 @@ class AlphaGoNode:
 
 class AlphaGoAgent(BaseAgent):
     """
-    Tác tử Cấp 7A (Bonus — AlphaGo-Inspired Hybrid PUCT-MCTS) cho Caro 11x11.
+    Tác tử Cấp 7 (Bonus — AlphaGo-Inspired Hybrid PUCT-MCTS) cho Caro 11x11.
 
     Kết hợp 3 trụ cột theo đúng kiến trúc AlphaGo (Silver et al., Nature 2016):
-      1. **Policy Network (Cấp 5B — Residual Policy CNN)**: cung cấp phân phối tiên nghiệm
+      1. **Policy Network (Cấp 5 — Residual Policy CNN)**: cung cấp phân phối tiên nghiệm
          `P(s, a)` dẫn đường cây tìm kiếm PUCT và lọc top-K nhánh chiến thuật mạnh nhất.
-      2. **Value / Q Network (Cấp 6A — Dueling Double-DQN)**: cung cấp ước lượng giá trị lá
+      2. **Value / Q Network (Cấp 6 — Dueling Double-DQN)**: cung cấp ước lượng giá trị lá
          học từ tăng cường `v_RL(s) = clip(max_{a in legal} Q(s, a), -1, 1)`.
       3. **PUCT-MCTS + Zobrist Eval Cache + Pha trộn giá trị lá (`value_blend_alpha`)**:
          `v_leaf = alpha * v_RL(s) + (1 - alpha) * tanh(evaluate_board / scale)`
@@ -222,7 +222,7 @@ class AlphaGoAgent(BaseAgent):
         self.seed = seed
         self.rng = random.Random(seed)
 
-        # 1. Nạp Policy Network (Cấp 5B)
+        # 1. Nạp Policy Network (Cấp 5)
         if policy_agent is not None:
             self.policy_agent = policy_agent
         else:
@@ -242,7 +242,7 @@ class AlphaGoAgent(BaseAgent):
                 seed=seed,
             )
 
-        # 2. Nạp Value / Q Network (Cấp 6A)
+        # 2. Nạp Value / Q Network (Cấp 6)
         if value_agent is not None:
             self.value_agent = value_agent
         else:
@@ -300,7 +300,7 @@ class AlphaGoAgent(BaseAgent):
     ) -> list[tuple[int, float]]:
         """
         Trả về top-K `(action, prior)` kết hợp Ensemble Neural Prior từ cả hai mạng:
-          `P_ens(s, a) = (1 - w_rl) * P_5B(s, a) + w_rl * softmax(Q_6A(s, a) / T)`
+          `P_ens(s, a) = (1 - w_rl) * P_L5(s, a) + w_rl * softmax(Q_L6(s, a) / T)`
         (có Zobrist Eval Cache).
         """
         if self.use_eval_cache:
@@ -309,8 +309,8 @@ class AlphaGoAgent(BaseAgent):
                 self.last_cache_hits += 1
                 return cached
 
-        probs_5b = self.policy_agent.predict_probs(env, restrict_to_candidates=False)
-        p5 = np.array([max(1e-6, float(probs_5b[a])) for a in candidates], dtype=np.float64)
+        probs_l5 = self.policy_agent.predict_probs(env, restrict_to_candidates=False)
+        p5 = np.array([max(1e-6, float(probs_l5[a])) for a in candidates], dtype=np.float64)
         p5 /= float(np.sum(p5))
 
         w_rl = self.rl_prior_weight
@@ -374,7 +374,7 @@ class AlphaGoAgent(BaseAgent):
                 # Thế cờ đã ngã ngũ cưỡng bức -> dùng luôn tín hiệu chính xác, tiết kiệm 1 lượt forward RL
                 v_rl_p1 = v_heur_p1
             else:
-                # Dùng độ chênh V_head đã chuẩn hóa kết hợp lợi thế top-Q từ Dueling DQN 6A
+                # Dùng độ chênh V_head đã chuẩn hóa kết hợp lợi thế top-Q từ Dueling DQN Cấp 6
                 v_head = self.value_agent.predict_value(env)
                 v_to_move = float(math.tanh(v_head + 0.5))
                 v_rl_p1 = v_to_move * float(env.current_player)
@@ -387,7 +387,7 @@ class AlphaGoAgent(BaseAgent):
         return out
 
     def select_action(self, env: CaroEnv) -> int:
-        """Chọn nước đi tối ưu nhất bằng cây tìm kiếm PUCT-MCTS kết hợp Policy 5B + Value/Q 6A."""
+        """Chọn nước đi tối ưu nhất bằng cây tìm kiếm PUCT-MCTS kết hợp Policy Cấp 5 + Value/Q Cấp 6."""
         t0 = time.perf_counter()
         self.last_search_count = 0
         self.last_cache_hits = 0
@@ -419,7 +419,7 @@ class AlphaGoAgent(BaseAgent):
             policy_cache: dict[int, list[tuple[int, float]]] = {}
             value_cache: dict[int, tuple[float, float]] = {}
 
-            # Đánh giá giá trị gốc từ mạng RL 6A phục vụ giải thích (Explainability)
+            # Đánh giá giá trị gốc từ mạng RL Cấp 6 phục vụ giải thích (Explainability)
             if self.value_blend_alpha > 0.0:
                 _, root_v_p1 = self._evaluate_leaf_p1(env, root_hash, value_cache)
                 self.last_root_value_rl = root_v_p1 * float(env.current_player)
@@ -464,7 +464,7 @@ class AlphaGoAgent(BaseAgent):
                     if node.visits == 0:
                         break
 
-                # 2. Lazy Expansion bằng Policy Network 5B khi nút được thăm lại lần >= 2
+                # 2. Lazy Expansion bằng Policy Network 5 khi nút được thăm lại lần >= 2
                 if node.visits > 0 and not node.is_expanded and not sim_env.is_terminal():
                     sub_cands = get_candidate_actions(sim_env, radius=self.candidate_radius)
                     if not sub_cands:
@@ -481,7 +481,7 @@ class AlphaGoAgent(BaseAgent):
                         if self.use_eval_cache:
                             cur_hash ^= (keys_x[act] if mover == 1 else keys_o[act]) ^ turn_key
 
-                # 3. Evaluation bằng Value/Q 6A (+ pha trộn Heuristic theo value_blend_alpha)
+                # 3. Evaluation bằng Value/Q 6 (+ pha trộn Heuristic theo value_blend_alpha)
                 outcome_p1, neural_p1 = self._evaluate_leaf_p1(sim_env, cur_hash, value_cache)
                 node.neural_value = neural_p1 * float(node.player_just_moved)
 
@@ -526,11 +526,11 @@ class AlphaGoAgent(BaseAgent):
                     "visit_pct": round(100.0 * child.visits / total_visits, 2),
                     "value": float(q_mcts),
                     "q_mcts": round(float(q_mcts), 4),
-                    "prior_5b": round(float(child.prior), 4),
+                    "prior": round(float(child.prior), 4),
                     "value_rl": round(float(child.neural_value), 4),
                 }
             )
-        stats.sort(key=lambda item: (item["visits"], item["value"], item["prior_5b"]), reverse=True)
+        stats.sort(key=lambda item: (item["visits"], item["value"], item["prior"]), reverse=True)
         return stats[:top_k] if top_k is not None else stats
 
     def explain_decision(self, top_k: int = 5) -> dict[str, Any]:

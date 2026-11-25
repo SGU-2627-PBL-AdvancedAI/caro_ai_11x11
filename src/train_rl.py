@@ -654,7 +654,7 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(
-        description="Huấn luyện Cấp 6A: Dueling Double-DQN nâng cấp (Residual + GroupNorm + Masked Mean + Curriculum Self-Play)."
+        description="Huấn luyện Cấp 6: Dueling Double-DQN nâng cấp (Residual + GroupNorm + Masked Mean + Curriculum Self-Play)."
     )
     parser.add_argument("--stage1-episodes", type=int, default=900, help="Số ván chặng 1 (vs Lv1 Random/Local-Random).")
     parser.add_argument("--stage2-episodes", type=int, default=1200, help="Số ván chặng 2 (vs Tactical Ladder mềm).")
@@ -735,7 +735,7 @@ def main() -> None:
 
     n_params = sum(p.numel() for p in online_net.parameters())
     print(
-        f"=== Level 6A Dueling Double-DQN (ResGN blocks={args.num_res_blocks}, ch={args.res_channels}, "
+        f"=== Level 6 Dueling Double-DQN (ResGN blocks={args.num_res_blocks}, ch={args.res_channels}, "
         f"in={in_channels}, params={n_params:,}) on {device} | shaping={args.shaping_mode} ==="
     )
 

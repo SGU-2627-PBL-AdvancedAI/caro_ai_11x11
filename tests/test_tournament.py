@@ -20,6 +20,7 @@ from src.tournament import (
     get_process_rss_mb,
     percentile_p95,
     play_single_game,
+    recommended_workers,
     run_pair_match,
     run_round_robin,
     wilson_ci95,
@@ -247,3 +248,60 @@ def test_run_round_robin_end_to_end_subset(tmp_path: Path):
     assert "ALL_GAMES_OVERALL" in set(out["first_player"]["agent_id"])
     assert out["metadata"]["total_pairs"] == 6
     assert out["metadata"]["total_games"] == 12
+
+
+def test_run_round_robin_parallel_workers_and_resume(tmp_path: Path):
+    assert 1 <= recommended_workers() <= 8
+
+    logs_dir = tmp_path / "logs_par"
+    tables_dir = tmp_path / "tables_par"
+
+    # Run 4 games/pair across 3 fast agents (L1, L2, L6) using 2 parallel worker processes
+    out = run_round_robin(
+        mode="default_config",
+        games_per_pair=4,
+        include_levels=(1, 2, 6),
+        output_logs_dir=logs_dir,
+        output_tables_dir=tables_dir,
+        resume=False,
+        bootstrap_samples=200,
+        verbose=False,
+        max_workers=2,
+    )
+    assert out["metadata"]["max_workers"] == 2
+    assert out["metadata"]["total_pairs"] == 3
+    assert out["metadata"]["total_games"] == 12
+
+    jsonl_files = sorted(logs_dir.glob("*.jsonl"))
+    assert len(jsonl_files) == 3
+    for jf in jsonl_files:
+        recs = [json.loads(ln) for ln in jf.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        assert len(recs) == 4
+        assert sorted(r["game_index"] for r in recs) == [1, 2, 3, 4]
+        assert sum(1 for r in recs if r["a_side"] == "X") == 2
+        assert sum(1 for r in recs if r["a_side"] == "O") == 2
+
+    # Simulate partial crash: drop game_index=2 from first file, then resume in parallel
+    first_log = jsonl_files[0]
+    kept = [
+        ln
+        for ln in first_log.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and json.loads(ln)["game_index"] != 2
+    ]
+    first_log.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+    out_resumed = run_round_robin(
+        mode="default_config",
+        games_per_pair=4,
+        include_levels=(1, 2, 6),
+        output_logs_dir=logs_dir,
+        output_tables_dir=tables_dir,
+        resume=True,
+        bootstrap_samples=200,
+        verbose=False,
+        max_workers=2,
+    )
+    assert out_resumed["metadata"]["total_games"] == 12
+    recs_after = [json.loads(ln) for ln in first_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert sorted(r["game_index"] for r in recs_after) == [1, 2, 3, 4]
+

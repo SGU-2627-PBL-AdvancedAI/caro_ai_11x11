@@ -84,7 +84,7 @@ class _ResGNBlock(nn.Module):
 
 class DuelingCaroDQN(nn.Module):
     """
-    Mạng Dueling CNN DQN cho bàn cờ Caro N x N (Phương án 6A):
+    Mạng Dueling CNN DQN cho bàn cờ Caro N x N (Cấp 6):
       - Hỗ trợ kiến trúc nâng cấp Residual + GroupNorm (`use_residual=True`, `norm_type="group"`)
         với trường nhìn phủ trọn bàn cờ 11x11 và ổn định dưới Soft Target Update (Polyak).
       - Hỗ trợ tương thích ngược với cấu trúc Conv tuần tự cũ (`use_residual=False`).
@@ -193,7 +193,7 @@ def resolve_device(device: str = "auto") -> torch.device:
 
 class RLAgent(BaseAgent):
     """
-    Tác tử Cấp 6: Deep Reinforcement Learning (Dueling Double-DQN nâng cấp 6A) cho Caro 11x11.
+    Tác tử Cấp 6: Deep Reinforcement Learning (Dueling Double-DQN nâng cấp 6) cho Caro 11x11.
     Tự động nhận diện cả checkpoint mới (Residual + GroupNorm + 4 kênh) lẫn checkpoint cũ
     (BatchNorm + 3 kênh) khi nạp từ đĩa.
     """

@@ -12,8 +12,9 @@
     402
   ],
   "opening_book_size": 20,
-  "elapsed_sec": 277.14,
-  "peak_rss_mb": 347.01,
+  "max_workers": 4,
+  "elapsed_sec": 0.05,
+  "peak_rss_mb": 310.07,
   "overall_first_player": {
     "x_wins": 47,
     "o_wins": 34,
@@ -37,7 +38,7 @@
     "draw_condition": "Bàn cờ đầy 121 nước không có bên nào đủ 5 quân liên tiếp"
   },
   "hardware": {
-    "timestamp_utc": "2026-11-25T21:50:53.129150+00:00",
+    "timestamp_utc": "2026-11-25T23:37:57.323402+00:00",
     "os": "Windows 10 (AMD64)",
     "processor": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
     "cpu_cores_logical": 20,
@@ -47,7 +48,7 @@
     "torch_version": "2.15.0+cpu",
     "compute_device": "CPU-only",
     "vram_total_mb": 0.0,
-    "process_rss_mb": 337.69
+    "process_rss_mb": 307.65
   },
   "agents": [
     {
@@ -101,7 +102,7 @@
     {
       "agent_id": "L7_AlphaGo",
       "level": 7,
-      "config_summary": "Default Ensemble Prior (5B+6A) + PUCT (200 sims, cap=0.5s)",
+      "config_summary": "Default Ensemble Prior (L5+L6) + PUCT (200 sims, cap=0.5s)",
       "budget_note": "Default 200 sims / 0.5s cap",
       "checkpoint_mb": 1.789,
       "train_time_sec": 634.3

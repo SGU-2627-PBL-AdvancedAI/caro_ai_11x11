@@ -1,7 +1,7 @@
 ﻿matchup,games,wins,draws,losses,score_pct,ci95_low,ci95_high,as_X,as_O,x_win_pct,o_win_pct,avg_moves,avg_ms,p95_ms,avg_search,elapsed_sec
-Pure CNN (5B) vs Lv1 Random,6,6,0,0,100.0,60.97,100.0,3W-0D-0L,3W-0D-0L,50.0,50.0,9.5,2.658,3.047,1.0,0.08
-Pure CNN (5B ResNet) vs Old Strong CNN (.npz),6,6,0,0,100.0,60.97,100.0,3W-0D-0L,3W-0D-0L,50.0,50.0,13.5,3.087,3.487,1.0,0.14
-"Pure CNN (5B, standard opening) vs Lv2 RuleBased",6,2,0,4,33.33,9.68,70.0,2W-0D-1L,0W-0D-3L,83.3,16.7,23.83,3.144,3.723,1.0,1.5
-"Pure CNN (5B, diverse openings) vs Lv2 RuleBased",6,0,0,6,0.0,0.0,39.03,0W-0D-3L,0W-0D-3L,50.0,50.0,23.83,3.145,3.416,1.0,1.43
-"CNN+Shortcut (5B, diverse) vs Lv2 RuleBased",6,2,0,4,33.33,9.68,70.0,2W-0D-1L,0W-0D-3L,83.3,16.7,33.83,3.67,5.408,28.96,2.26
-"CNN+PUCT(120, no shortcut, diverse) vs Lv2 RuleBased",6,2,0,4,33.33,9.68,70.0,1W-0D-2L,1W-0D-2L,50.0,50.0,51.5,196.254,244.592,120.0,32.28
+Pure CNN (5B) vs Lv1 Random,6,6,0,0,100.0,60.97,100.0,3W-0D-0L,3W-0D-0L,50.0,50.0,9.5,1.343,2.282,1.0,0.04
+Pure CNN (5B ResNet) vs Old Strong CNN (.npz),6,6,0,0,100.0,60.97,100.0,3W-0D-0L,3W-0D-0L,50.0,50.0,13.5,2.642,3.66,1.0,0.13
+"Pure CNN (5B, standard opening) vs Lv2 RuleBased",6,2,0,4,33.33,9.68,70.0,2W-0D-1L,0W-0D-3L,83.3,16.7,23.83,2.215,3.385,1.0,1.38
+"Pure CNN (5B, diverse openings) vs Lv2 RuleBased",6,0,0,6,0.0,0.0,39.03,0W-0D-3L,0W-0D-3L,50.0,50.0,23.83,1.747,2.289,1.0,1.23
+"CNN+Shortcut (5B, diverse) vs Lv2 RuleBased",6,2,0,4,33.33,9.68,70.0,2W-0D-1L,0W-0D-3L,83.3,16.7,33.83,2.686,4.301,28.96,2.0
+"CNN+PUCT(120, no shortcut, diverse) vs Lv2 RuleBased",6,2,0,4,33.33,9.68,70.0,1W-0D-2L,1W-0D-2L,50.0,50.0,51.5,142.924,253.453,120.0,24.29

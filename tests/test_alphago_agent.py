@@ -60,7 +60,7 @@ def test_alphago_blend_modes_and_explainability(alpha: float):
     assert exp["top_moves"][0]["action"] == action
     for item in exp["top_moves"]:
         assert 0.0 <= item["q_mcts"] <= 1.0
-        assert 0.0 <= item["prior_5b"] <= 1.0
+        assert 0.0 <= item["prior"] <= 1.0
 
 
 def test_alphago_shortcuts_and_terminal_error():

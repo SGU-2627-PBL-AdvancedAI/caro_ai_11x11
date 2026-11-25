@@ -13,12 +13,13 @@
   kích thước checkpoint, Elo/Bradley-Terry, phân tích First-Player Advantage & Seed Variance.
 - Lưu log thô từng trận đấu cho **từng cặp đấu** dưới dạng `.jsonl` (hỗ trợ `resume=True`).
 - Hỗ trợ 03 thí nghiệm Ablation / Sensitivity chuẩn (Alpha-Beta & Depth, MCTS Budget &
-  Heuristic Playout, Policy-only vs Policy+PUCT vs AlphaGo 7A).
+  Heuristic Playout, Policy-only vs Policy+PUCT vs AlphaGo Cấp 7).
 """
 
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import ctypes
 import json
 import math
@@ -123,7 +124,7 @@ DEFAULT_TRAINING_METADATA: dict[str, dict[str, Any]] = {
         "method_family": "Deep Reinforcement Learning",
     },
     "L7_AlphaGo": {
-        "train_time_sec": 634.3,  # Tổng thời gian huấn luyện 5B (185.0s) + 6A (449.3s)
+        "train_time_sec": 634.3,  # Tổng thời gian huấn luyện Cấp 5 (185.0s) + Cấp 6 (449.3s)
         "checkpoint_rel": "checkpoints/05_cnn_policy_best.pt+checkpoints/06_rl_best.pt",
         "method_family": "AlphaGo-Inspired (Neural+PUCT)",
     },
@@ -328,6 +329,12 @@ def compute_elo_ratings(
 # 3. Định nghĩa cấu hình 7 tác tử cho 2 chế độ ngân sách (Mục 3.5)
 # ---------------------------------------------------------------------------
 
+def recommended_workers(max_cap: int = 8) -> int:
+    """Số tiến trình song song an toàn (<= nửa số luồng logic, trần max_cap) để tránh nghẽn CPU."""
+    cores = os.cpu_count() or 2
+    return max(1, min(int(max_cap), cores // 2))
+
+
 @dataclass
 class AgentSpec:
     """Đặc tả một tác tử tham gia giải đấu."""
@@ -342,6 +349,7 @@ class AgentSpec:
     train_time_sec: float = 0.0
     checkpoint_size_mb: float = 0.0
     extra_meta: dict[str, Any] = field(default_factory=dict)
+    descriptor: dict[str, Any] | None = None
 
 
 def _checkpoint_size_mb(root: Path, rel_spec: str | None) -> float:
@@ -360,17 +368,17 @@ def _load_shared_neural_models(
     cnn_ckpt: Path | None = None,
     rl_ckpt: Path | None = None,
 ) -> tuple[CNNAgent, RLAgent]:
-    """Nạp sẵn mô hình mạng nơ-ron Cấp 5B và 6A một lần duy nhất để chia sẻ bộ nhớ."""
+    """Nạp sẵn mô hình mạng nơ-ron Cấp 5 và Cấp 6 một lần duy nhất để chia sẻ bộ nhớ."""
     cnn_path = cnn_ckpt or (project_root / "checkpoints" / "05_cnn_policy_best.pt")
     rl_path = rl_ckpt or (project_root / "checkpoints" / "06_rl_best.pt")
 
     if not cnn_path.exists():
-        raise FileNotFoundError(f"Không tìm thấy checkpoint Cấp 5B: {cnn_path}")
+        raise FileNotFoundError(f"Không tìm thấy checkpoint Cấp 5: {cnn_path}")
     if not rl_path.exists():
-        raise FileNotFoundError(f"Không tìm thấy checkpoint Cấp 6A: {rl_path}")
+        raise FileNotFoundError(f"Không tìm thấy checkpoint Cấp 6: {rl_path}")
 
     shared_cnn = CNNAgent(
-        name="Shared_CNN_5B",
+        name="Shared_CNN_L5",
         model_path=cnn_path,
         use_tactical_shortcut=True,
         use_mix_mcts=False,
@@ -379,7 +387,7 @@ def _load_shared_neural_models(
     )
     shared_rl = RLAgent(
         checkpoint_path=rl_path,
-        name="Shared_RL_6A",
+        name="Shared_RL_L6",
     )
     return shared_cnn, shared_rl
 
@@ -602,7 +610,7 @@ def build_agent_specs(
         specs.append(
             AgentSpec(
                 agent_id="L5_CNN",
-                display_name="L5 CNN-5B",
+                display_name="L5 CNN",
                 level=5,
                 mode=mode,
                 factory=lambda seed, _cnn=shared_cnn: _SharedPolicyWrapper(
@@ -620,7 +628,7 @@ def build_agent_specs(
         specs.append(
             AgentSpec(
                 agent_id="L6_RL",
-                display_name="L6 RL-DQN-6A",
+                display_name="L6 RL-DQN",
                 level=6,
                 mode=mode,
                 factory=lambda seed, _rl=shared_rl: _SharedRLWrapper(
@@ -639,7 +647,7 @@ def build_agent_specs(
             specs.append(
                 AgentSpec(
                     agent_id="L7_AlphaGo",
-                    display_name="L7 AlphaGo-7A",
+                    display_name="L7 AlphaGo",
                     level=7,
                     mode=mode,
                     factory=lambda seed, _cnn=shared_cnn, _rl=shared_rl, _tb=tb: AlphaGoAgent(
@@ -655,7 +663,7 @@ def build_agent_specs(
                         use_tactical_shortcut=True,
                         seed=seed,
                     ),
-                    config_summary=f"Ensemble Prior (5B+6A) + PUCT + Value Blend 0.25 (time={tb_ms}ms)",
+                    config_summary=f"Ensemble Prior (L5+L6) + PUCT + Value Blend 0.25 (time={tb_ms}ms)",
                     budget_note=f"Time budget = {tb_ms} ms/move",
                     train_time_sec=t_sec,
                     checkpoint_size_mb=ck_mb,
@@ -665,7 +673,7 @@ def build_agent_specs(
             specs.append(
                 AgentSpec(
                     agent_id="L7_AlphaGo",
-                    display_name="L7 AlphaGo-7A",
+                    display_name="L7 AlphaGo",
                     level=7,
                     mode=mode,
                     factory=lambda seed, _cnn=shared_cnn, _rl=shared_rl: AlphaGoAgent(
@@ -681,14 +689,186 @@ def build_agent_specs(
                         use_tactical_shortcut=True,
                         seed=seed,
                     ),
-                    config_summary="Default Ensemble Prior (5B+6A) + PUCT (200 sims, cap=0.5s)",
+                    config_summary="Default Ensemble Prior (L5+L6) + PUCT (200 sims, cap=0.5s)",
                     budget_note="Default 200 sims / 0.5s cap",
                     train_time_sec=t_sec,
                     checkpoint_size_mb=ck_mb,
                 )
             )
 
+    for sp in specs:
+        sp.descriptor = {
+            "kind": "standard",
+            "mode": mode,
+            "time_budget_sec": tb,
+            "agent_id": sp.agent_id,
+            "level": sp.level,
+        }
+
     return specs
+
+
+# ---------------------------------------------------------------------------
+# 3.5 Worker đa tiến trình (tương thích Windows spawn & Jupyter Notebook)
+# ---------------------------------------------------------------------------
+
+_WORKER_SPEC_CACHE: dict[tuple[str, float, str, int], AgentSpec] = {}
+_WORKER_ABL3_MODELS: dict[str, dict[str, Any]] = {}
+
+
+def _ensure_pythonpath(root: Path) -> None:
+    """Đảm bảo thư mục gốc dự án nằm trong PYTHONPATH để tiến trình con (Windows spawn) từ notebooks/ luôn import được `src`."""
+    root_str = str(root.resolve())
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+    cur = os.environ.get("PYTHONPATH", "")
+    parts = [p for p in cur.split(os.pathsep) if p]
+    if root_str not in parts:
+        os.environ["PYTHONPATH"] = os.pathsep.join([root_str] + parts) if parts else root_str
+
+
+def _worker_init() -> None:
+    """Giới hạn mỗi worker dùng 1 luồng BLAS/PyTorch để tránh tranh chấp CPU khi chạy song song."""
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    try:
+        import torch
+
+        torch.set_num_threads(1)
+    except Exception:
+        pass
+
+
+def _build_agent_from_descriptor(desc: dict[str, Any], seed: int, project_root: str) -> Any:
+    """Khởi tạo tác tử trong tiến trình worker từ đặc tả tuần tự hóa được (picklable)."""
+    kind = desc["kind"]
+    root = Path(project_root)
+
+    if kind == "standard":
+        mode = str(desc["mode"])
+        tb = float(desc["time_budget_sec"])
+        lv = int(desc["level"])
+        key = (mode, tb, project_root, lv)
+        if key not in _WORKER_SPEC_CACHE:
+            built = build_agent_specs(
+                mode=mode,
+                time_budget_sec=tb,
+                project_root=root,
+                include_levels=(lv,),
+            )
+            for s in built:
+                _WORKER_SPEC_CACHE[(mode, tb, project_root, s.level)] = s
+        return _WORKER_SPEC_CACHE[key].factory(seed)
+
+    if kind == "ablation_minimax_depth":
+        d_int = int(desc["depth"])
+        return MinimaxAgent(
+            name=f"Minimax_d{d_int}",
+            max_depth=d_int,
+            use_alpha_beta=True,
+            use_move_ordering=True,
+            use_tt=True,
+            max_branch_root=14 if d_int <= 3 else 10,
+            max_branch_inner=10 if d_int <= 3 else 7,
+            time_limit_sec=0.8,
+            seed=seed,
+            tie_break_eps=1.5,
+        )
+
+    if kind == "ablation_mcts":
+        use_h = bool(desc["use_heuristic_leaf"])
+        return MCTSAgent(
+            num_rollouts=int(desc["num_rollouts"]),
+            exploration_c=1.414,
+            time_limit_sec=None,
+            rollout_policy=str(desc["rollout_policy"]),
+            use_heuristic_leaf=use_h,
+            use_prior_ordering=use_h,
+            use_progressive_widening=use_h,
+            seed=seed,
+            name=str(desc["agent_id"]),
+        )
+
+    if kind == "ablation_policy_variant":
+        var_id = str(desc["variant_id"])
+        if project_root not in _WORKER_ABL3_MODELS:
+            shared_cnn, shared_rl = _load_shared_neural_models(root)
+            cnn_path = root / "checkpoints" / "05_cnn_policy_best.pt"
+            cnn_no_shortcut = CNNAgent(
+                name="L5_PolicyOnly_NoShortcut",
+                model_path=cnn_path,
+                use_tactical_shortcut=False,
+                use_mix_mcts=False,
+                deterministic=True,
+                seed=42,
+            )
+            cnn_plus_puct = CNNAgent(
+                name="L5_Policy_Plus_PUCT",
+                model_path=cnn_path,
+                use_tactical_shortcut=True,
+                use_mix_mcts=True,
+                num_rollouts=150,
+                time_limit_sec=0.5,
+                seed=42,
+            )
+            _WORKER_ABL3_MODELS[project_root] = {
+                "shared_cnn": shared_cnn,
+                "shared_rl": shared_rl,
+                "cnn_no_shortcut": cnn_no_shortcut,
+                "cnn_plus_puct": cnn_plus_puct,
+            }
+        models = _WORKER_ABL3_MODELS[project_root]
+        if var_id == "L5_PolicyOnly_NoShortcut":
+            base = models["cnn_no_shortcut"]
+            base.seed = seed
+            if hasattr(base, "rng"):
+                base.rng = random.Random(seed)
+            return _SharedPolicyWrapper(base, name=var_id, seed=seed)
+        if var_id == "L5_PolicyOnly_Shortcut":
+            base = models["shared_cnn"]
+            base.seed = seed
+            if hasattr(base, "rng"):
+                base.rng = random.Random(seed)
+            return _SharedPolicyWrapper(base, name=var_id, seed=seed)
+        if var_id == "L5_Policy_Plus_PUCT":
+            base = models["cnn_plus_puct"]
+            base.seed = seed
+            if hasattr(base, "rng"):
+                base.rng = random.Random(seed)
+            return _SharedPolicyWrapper(base, name=var_id, seed=seed)
+        if var_id == "L7_AlphaGo_EnsemblePUCT":
+            return AlphaGoAgent(
+                name=var_id,
+                policy_agent=models["shared_cnn"],
+                value_agent=models["shared_rl"],
+                auto_load_default=False,
+                num_simulations=200,
+                time_limit_sec=0.5,
+                value_blend_alpha=0.25,
+                rl_prior_weight=0.35,
+                seed=seed,
+            )
+
+    raise ValueError(f"Không nhận diện được descriptor: {desc!r}")
+
+
+def _play_game_worker(task: dict[str, Any]) -> dict[str, Any]:
+    """Hàm top-level cho ProcessPoolExecutor chơi trọn 1 ván đấu và trả về log dict."""
+    agent_a = _build_agent_from_descriptor(task["desc_a"], int(task["game_seed_a"]), str(task["project_root"]))
+    agent_b = _build_agent_from_descriptor(task["desc_b"], int(task["game_seed_b"]), str(task["project_root"]))
+    return play_single_game(
+        agent_a=agent_a,
+        agent_b=agent_b,
+        agent_a_id=str(task["agent_a_id"]),
+        agent_b_id=str(task["agent_b_id"]),
+        a_side=int(task["a_side"]),
+        opening_moves=task["opening_moves"],
+        opening_index=int(task["opening_index"]),
+        seed=int(task["seed"]),
+        mode=str(task["mode"]),
+        game_index=int(task["game_index"]),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -899,69 +1079,130 @@ def run_pair_match(
     resume: bool = True,
     bootstrap_samples: int = 2000,
     verbose: bool = True,
+    max_workers: int = 1,
+    executor: ProcessPoolExecutor | None = None,
+    project_root: str | Path | None = None,
+    pair_label: str = "",
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Chạy `games_per_pair` ván đối kháng cân bằng 50/50 X-O giữa 2 tác tử và lưu `.jsonl` riêng."""
+    """Chạy `games_per_pair` ván đối kháng cân bằng 50/50 X-O giữa 2 tác tử và lưu `.jsonl` riêng.
+
+    Hỗ trợ chạy song song đa tiến trình (`max_workers > 1` hoặc `executor` dùng chung)
+    và khôi phục an toàn theo `game_index` (`resume=True`).
+    """
     if games_per_pair <= 0 or games_per_pair % 2 != 0:
         raise ValueError("games_per_pair phải là số nguyên dương chẵn để chia đều 50/50 X và O.")
     if not seeds:
         raise ValueError("seeds không được rỗng.")
 
-    records: list[dict[str, Any]] = []
+    records_by_idx: dict[int, dict[str, Any]] = {}
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         if resume and log_path.exists():
-            records = _load_existing_jsonl(log_path)
-            if len(records) > games_per_pair:
-                records = records[:games_per_pair]
+            for r in _load_existing_jsonl(log_path):
+                gi = int(r.get("game_index", 0))
+                if 1 <= gi <= games_per_pair and gi not in records_by_idx:
+                    records_by_idx[gi] = r
         elif not resume and log_path.exists():
             log_path.unlink()
 
-    start_idx = len(records)
-    if verbose and start_idx > 0:
+    existing_count = len(records_by_idx)
+    pending_g = [g for g in range(games_per_pair) if (g + 1) not in records_by_idx]
+    prefix = f"{pair_label} " if pair_label else ""
+
+    if verbose and existing_count > 0:
         print(
-            f"  [Resume] {spec_a.agent_id} vs {spec_b.agent_id}: đã có {start_idx}/{games_per_pair} ván.",
+            f"  {prefix}[Resume] {spec_a.agent_id} vs {spec_b.agent_id}: "
+            f"đã có {existing_count}/{games_per_pair} ván (còn {len(pending_g)} ván).",
             flush=True,
         )
 
-    n_pairs = games_per_pair // 2
     n_seeds = len(seeds)
     n_openings = max(1, len(opening_book))
+    root_str = str(Path(project_root) if project_root is not None else Path(__file__).resolve().parents[1])
 
-    file_handle = log_path.open("a", encoding="utf-8") if log_path is not None else None
-    try:
-        for g in range(start_idx, games_per_pair):
-            pair_k = g // 2
-            a_side = 1 if (g % 2 == 0) else -1
-            seed_val = int(seeds[pair_k % n_seeds])
-            # Mỗi ván cặp (X/O) dùng chung khai cuộc và seed cơ sở, cộng offset game để đa dạng hóa
-            game_seed_a = seed_val * 1000 + pair_k * 2 + (0 if a_side == 1 else 1)
-            game_seed_b = seed_val * 1000 + pair_k * 2 + (1 if a_side == 1 else 0) + 500
-            opening_idx = pair_k % n_openings
-            opening = opening_book[opening_idx] if opening_book else ()
+    def _make_task(g: int) -> dict[str, Any]:
+        pair_k = g // 2
+        a_side = 1 if (g % 2 == 0) else -1
+        seed_val = int(seeds[pair_k % n_seeds])
+        game_seed_a = seed_val * 1000 + pair_k * 2 + (0 if a_side == 1 else 1)
+        game_seed_b = seed_val * 1000 + pair_k * 2 + (1 if a_side == 1 else 0) + 500
+        opening_idx = pair_k % n_openings
+        opening = tuple(int(x) for x in opening_book[opening_idx]) if opening_book else ()
+        return {
+            "g": g,
+            "game_index": g + 1,
+            "a_side": a_side,
+            "seed": seed_val,
+            "game_seed_a": game_seed_a,
+            "game_seed_b": game_seed_b,
+            "opening_index": opening_idx,
+            "opening_moves": opening,
+            "agent_a_id": spec_a.agent_id,
+            "agent_b_id": spec_b.agent_id,
+            "mode": spec_a.mode,
+            "desc_a": spec_a.descriptor,
+            "desc_b": spec_b.descriptor,
+            "project_root": root_str,
+        }
 
-            agent_a = spec_a.factory(game_seed_a)
-            agent_b = spec_b.factory(game_seed_b)
+    can_parallel = (
+        len(pending_g) > 1
+        and spec_a.descriptor is not None
+        and spec_b.descriptor is not None
+        and (executor is not None or int(max_workers) > 1)
+    )
 
-            rec = play_single_game(
-                agent_a=agent_a,
-                agent_b=agent_b,
-                agent_a_id=spec_a.agent_id,
-                agent_b_id=spec_b.agent_id,
-                a_side=a_side,
-                opening_moves=opening,
-                opening_index=opening_idx,
-                seed=seed_val,
-                mode=spec_a.mode,
-                game_index=g + 1,
-            )
-            records.append(rec)
+    if pending_g:
+        file_handle = log_path.open("a", encoding="utf-8") if log_path is not None else None
+        try:
+            if can_parallel:
+                tasks = [_make_task(g) for g in pending_g]
+                own_pool: ProcessPoolExecutor | None = None
+                pool = executor
+                if pool is None:
+                    _ensure_pythonpath(Path(root_str))
+                    own_pool = ProcessPoolExecutor(
+                        max_workers=min(int(max_workers), len(tasks)),
+                        initializer=_worker_init,
+                    )
+                    pool = own_pool
+                try:
+                    futures = [pool.submit(_play_game_worker, t) for t in tasks]
+                    for fut in as_completed(futures):
+                        rec = fut.result()
+                        records_by_idx[int(rec["game_index"])] = rec
+                        if file_handle is not None:
+                            file_handle.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                            file_handle.flush()
+                finally:
+                    if own_pool is not None:
+                        own_pool.shutdown(wait=True)
+            else:
+                for g in pending_g:
+                    t = _make_task(g)
+                    agent_a = spec_a.factory(t["game_seed_a"])
+                    agent_b = spec_b.factory(t["game_seed_b"])
+                    rec = play_single_game(
+                        agent_a=agent_a,
+                        agent_b=agent_b,
+                        agent_a_id=spec_a.agent_id,
+                        agent_b_id=spec_b.agent_id,
+                        a_side=t["a_side"],
+                        opening_moves=t["opening_moves"],
+                        opening_index=t["opening_index"],
+                        seed=t["seed"],
+                        mode=spec_a.mode,
+                        game_index=t["game_index"],
+                    )
+                    records_by_idx[int(rec["game_index"])] = rec
+                    if file_handle is not None:
+                        file_handle.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                        file_handle.flush()
+        finally:
             if file_handle is not None:
-                file_handle.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                file_handle.flush()
-    finally:
-        if file_handle is not None:
-            file_handle.close()
+                file_handle.close()
 
+    records = [records_by_idx[idx] for idx in sorted(records_by_idx)]
     summary = summarize_pair_logs(
         records=records,
         agent_a_id=spec_a.agent_id,
@@ -971,7 +1212,7 @@ def run_pair_match(
     )
     if verbose:
         print(
-            f"  [Done] {spec_a.agent_id:12s} vs {spec_b.agent_id:12s} ({games_per_pair:3d}g) | "
+            f"  {prefix}[Done] {spec_a.agent_id:12s} vs {spec_b.agent_id:12s} ({games_per_pair:3d}g) | "
             f"Score={summary['score_a_pct']:5.1f}% "
             f"(W{summary['wins_a']}-D{summary['draws']}-L{summary['losses_a']}) | "
             f"CI95=[{summary['wilson_ci95_low']:.1f}, {summary['wilson_ci95_high']:.1f}] | "
@@ -997,6 +1238,7 @@ def run_round_robin(
     resume: bool = True,
     bootstrap_samples: int = 2000,
     verbose: bool = True,
+    max_workers: int = 1,
 ) -> dict[str, Any]:
     """Chạy giải đấu Round-Robin đầy đủ cho chế độ `mode`, lưu toàn bộ log từng cặp & CSV."""
     root = Path(project_root) if project_root is not None else Path(__file__).resolve().parents[1]
@@ -1023,11 +1265,14 @@ def run_round_robin(
     )
     spec_map = {s.agent_id: s for s in specs}
     agent_ids = [s.agent_id for s in specs]
+    pairs = list(combinations(specs, 2))
+    total_pairs = len(pairs)
+    workers = max(1, int(max_workers))
 
     if verbose:
         print(
             f"\n=== ROUND-ROBIN TOURNAMENT [{mode}] | {len(specs)} agents | "
-            f"{len(specs) * (len(specs) - 1) // 2} pairs x {games_per_pair} games ===",
+            f"{total_pairs} pairs x {games_per_pair} games | workers={workers} ===",
             flush=True,
         )
 
@@ -1036,24 +1281,57 @@ def run_round_robin(
     pair_log_files: dict[str, str] = {}
     peak_rss_mb = get_process_rss_mb()
 
-    for spec_a, spec_b in combinations(specs, 2):
-        pair_file = logs_dir / f"{spec_a.agent_id}_vs_{spec_b.agent_id}.jsonl"
-        summary, recs = run_pair_match(
-            spec_a=spec_a,
-            spec_b=spec_b,
-            games_per_pair=games_per_pair,
-            seeds=seeds,
-            opening_book=OPENING_BOOK_11X11,
-            log_path=pair_file,
-            resume=resume,
-            bootstrap_samples=bootstrap_samples,
-            verbose=verbose,
-        )
-        summary["log_file"] = str(pair_file.relative_to(root)) if pair_file.is_relative_to(root) else str(pair_file)
-        matchup_rows.append(summary)
-        all_games.extend(recs)
-        pair_log_files[summary["matchup"]] = summary["log_file"]
-        peak_rss_mb = max(peak_rss_mb, get_process_rss_mb())
+    # Kiểm tra trước xem còn ván nào chưa hoàn thành để chỉ khởi tạo pool khi cần
+    needs_work = False
+    if workers > 1:
+        for spec_a, spec_b in pairs:
+            pf = logs_dir / f"{spec_a.agent_id}_vs_{spec_b.agent_id}.jsonl"
+            if not (resume and pf.exists() and len(_load_existing_jsonl(pf)) >= games_per_pair):
+                needs_work = True
+                break
+
+    if workers > 1 and needs_work:
+        _ensure_pythonpath(root)
+    shared_pool: ProcessPoolExecutor | None = (
+        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init)
+        if (workers > 1 and needs_work)
+        else None
+    )
+    try:
+        for pair_idx, (spec_a, spec_b) in enumerate(pairs, start=1):
+            pair_file = logs_dir / f"{spec_a.agent_id}_vs_{spec_b.agent_id}.jsonl"
+            pair_label = f"[{pair_idx:2d}/{total_pairs}]"
+            summary, recs = run_pair_match(
+                spec_a=spec_a,
+                spec_b=spec_b,
+                games_per_pair=games_per_pair,
+                seeds=seeds,
+                opening_book=OPENING_BOOK_11X11,
+                log_path=pair_file,
+                resume=resume,
+                bootstrap_samples=bootstrap_samples,
+                verbose=verbose,
+                max_workers=workers,
+                executor=shared_pool,
+                project_root=root,
+                pair_label=pair_label,
+            )
+            summary["log_file"] = str(pair_file.relative_to(root)) if pair_file.is_relative_to(root) else str(pair_file)
+            matchup_rows.append(summary)
+            all_games.extend(recs)
+            pair_log_files[summary["matchup"]] = summary["log_file"]
+            peak_rss_mb = max(peak_rss_mb, get_process_rss_mb())
+            if verbose:
+                elapsed = time.perf_counter() - t0
+                eta = (elapsed / pair_idx) * (total_pairs - pair_idx)
+                print(
+                    f"         -> Tiến độ [{mode}]: {pair_idx}/{total_pairs} cặp | "
+                    f"Đã chạy {elapsed:.1f}s | Ước tính còn ~{eta:.0f}s",
+                    flush=True,
+                )
+    finally:
+        if shared_pool is not None:
+            shared_pool.shutdown(wait=True)
 
     # 5.1 Ma trận đối đầu Score (%) & CI95
     score_mat = pd.DataFrame(np.nan, index=agent_ids, columns=agent_ids, dtype=float)
@@ -1222,6 +1500,7 @@ def run_round_robin(
         "time_budget_sec": float(time_budget_sec) if mode == "time_budget" else None,
         "seeds": [int(s) for s in seeds],
         "opening_book_size": len(OPENING_BOOK_11X11),
+        "max_workers": workers,
         "elapsed_sec": elapsed_total,
         "peak_rss_mb": round(peak_rss_mb, 2),
         "overall_first_player": {
@@ -1281,6 +1560,7 @@ def run_ablation_alphabeta_depth(
     project_root: str | Path | None = None,
     resume: bool = True,
     verbose: bool = True,
+    max_workers: int = 1,
 ) -> dict[str, pd.DataFrame]:
     """Ablation 1: Alpha-Beta Bật/Tắt (Mark Liu Ch. 6) & Độ nhạy Search Depth d=2..4."""
     root = Path(project_root) if project_root is not None else Path(__file__).resolve().parents[1]
@@ -1350,40 +1630,54 @@ def run_ablation_alphabeta_depth(
     # Phần B: Độ nhạy Search Depth d ∈ depths đối đầu L2_RuleBased
     opp_spec = build_agent_specs(mode="default_config", project_root=root, include_levels=(2,))[0]
     depth_rows: list[dict[str, Any]] = []
-    for d in depths:
-        d_int = int(d)
-        mm_spec = AgentSpec(
-            agent_id=f"Minimax_d{d_int}",
-            display_name=f"Minimax d={d_int}",
-            level=3,
-            mode="ablation",
-            factory=lambda seed, _d=d_int: MinimaxAgent(
-                name=f"Minimax_d{_d}",
-                max_depth=_d,
-                use_alpha_beta=True,
-                use_move_ordering=True,
-                use_tt=True,
-                max_branch_root=14 if _d <= 3 else 10,
-                max_branch_inner=10 if _d <= 3 else 7,
-                time_limit_sec=0.8,
-                seed=seed,
-                tie_break_eps=1.5,
-            ),
-            config_summary=f"Alpha-Beta+TT depth={d_int}",
-            budget_note=f"depth={d_int}",
-        )
-        log_file = logs_dir / f"ablation1_minimax_d{d_int}_vs_L2_RuleBased.jsonl"
-        summ, _ = run_pair_match(
-            spec_a=mm_spec,
-            spec_b=opp_spec,
-            games_per_pair=games_per_depth,
-            seeds=seeds,
-            log_path=log_file,
-            resume=resume,
-            verbose=verbose,
-        )
-        summ["search_depth"] = d_int
-        depth_rows.append(summ)
+    workers = max(1, int(max_workers))
+    if workers > 1:
+        _ensure_pythonpath(root)
+    pool: ProcessPoolExecutor | None = (
+        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init) if workers > 1 else None
+    )
+    try:
+        for d in depths:
+            d_int = int(d)
+            mm_spec = AgentSpec(
+                agent_id=f"Minimax_d{d_int}",
+                display_name=f"Minimax d={d_int}",
+                level=3,
+                mode="ablation",
+                factory=lambda seed, _d=d_int: MinimaxAgent(
+                    name=f"Minimax_d{_d}",
+                    max_depth=_d,
+                    use_alpha_beta=True,
+                    use_move_ordering=True,
+                    use_tt=True,
+                    max_branch_root=14 if _d <= 3 else 10,
+                    max_branch_inner=10 if _d <= 3 else 7,
+                    time_limit_sec=0.8,
+                    seed=seed,
+                    tie_break_eps=1.5,
+                ),
+                config_summary=f"Alpha-Beta+TT depth={d_int}",
+                budget_note=f"depth={d_int}",
+                descriptor={"kind": "ablation_minimax_depth", "depth": d_int},
+            )
+            log_file = logs_dir / f"ablation1_minimax_d{d_int}_vs_L2_RuleBased.jsonl"
+            summ, _ = run_pair_match(
+                spec_a=mm_spec,
+                spec_b=opp_spec,
+                games_per_pair=games_per_depth,
+                seeds=seeds,
+                log_path=log_file,
+                resume=resume,
+                verbose=verbose,
+                max_workers=workers,
+                executor=pool,
+                project_root=root,
+            )
+            summ["search_depth"] = d_int
+            depth_rows.append(summ)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
 
     df_pruning = pd.DataFrame(pruning_rows)
     df_depth = pd.DataFrame(depth_rows)
@@ -1399,6 +1693,7 @@ def run_ablation_mcts_budget_heuristic(
     project_root: str | Path | None = None,
     resume: bool = True,
     verbose: bool = True,
+    max_workers: int = 1,
 ) -> pd.DataFrame:
     """Ablation 2: MCTS Simulation Budget & Heuristic Playout ON vs OFF (Mark Liu Ch. 8)."""
     root = Path(project_root) if project_root is not None else Path(__file__).resolve().parents[1]
@@ -1417,39 +1712,59 @@ def run_ablation_mcts_budget_heuristic(
     for r_budget in rollout_budgets:
         configs.append((f"MCTS_Heuristic_r{int(r_budget)}", int(r_budget), "heuristic", True))
 
-    for cfg_id, n_roll, r_pol, use_h_leaf in configs:
-        mcts_spec = AgentSpec(
-            agent_id=cfg_id,
-            display_name=cfg_id,
-            level=4,
-            mode="ablation",
-            factory=lambda seed, _n=n_roll, _rp=r_pol, _hl=use_h_leaf, _id=cfg_id: MCTSAgent(
-                num_rollouts=_n,
-                exploration_c=1.414,
-                time_limit_sec=None,
-                rollout_policy=_rp,
-                use_heuristic_leaf=_hl,
-                use_prior_ordering=_hl,
-                use_progressive_widening=_hl,
-                seed=seed,
-                name=_id,
-            ),
-            config_summary=f"rollouts={n_roll}, rollout_policy={r_pol}, heur_leaf={use_h_leaf}",
-            budget_note=f"{n_roll} rollouts",
-        )
-        log_file = logs_dir / f"ablation2_{cfg_id}_vs_L2_RuleBased.jsonl"
-        summ, _ = run_pair_match(
-            spec_a=mcts_spec,
-            spec_b=opp_spec,
-            games_per_pair=games_per_config,
-            seeds=seeds,
-            log_path=log_file,
-            resume=resume,
-            verbose=verbose,
-        )
-        summ["rollouts_budget"] = n_roll
-        summ["heuristic_enabled"] = bool(use_h_leaf)
-        rows.append(summ)
+    workers = max(1, int(max_workers))
+    if workers > 1:
+        _ensure_pythonpath(root)
+    pool: ProcessPoolExecutor | None = (
+        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init) if workers > 1 else None
+    )
+    try:
+        for cfg_id, n_roll, r_pol, use_h_leaf in configs:
+            mcts_spec = AgentSpec(
+                agent_id=cfg_id,
+                display_name=cfg_id,
+                level=4,
+                mode="ablation",
+                factory=lambda seed, _n=n_roll, _rp=r_pol, _hl=use_h_leaf, _id=cfg_id: MCTSAgent(
+                    num_rollouts=_n,
+                    exploration_c=1.414,
+                    time_limit_sec=None,
+                    rollout_policy=_rp,
+                    use_heuristic_leaf=_hl,
+                    use_prior_ordering=_hl,
+                    use_progressive_widening=_hl,
+                    seed=seed,
+                    name=_id,
+                ),
+                config_summary=f"rollouts={n_roll}, rollout_policy={r_pol}, heur_leaf={use_h_leaf}",
+                budget_note=f"{n_roll} rollouts",
+                descriptor={
+                    "kind": "ablation_mcts",
+                    "agent_id": cfg_id,
+                    "num_rollouts": n_roll,
+                    "rollout_policy": r_pol,
+                    "use_heuristic_leaf": use_h_leaf,
+                },
+            )
+            log_file = logs_dir / f"ablation2_{cfg_id}_vs_L2_RuleBased.jsonl"
+            summ, _ = run_pair_match(
+                spec_a=mcts_spec,
+                spec_b=opp_spec,
+                games_per_pair=games_per_config,
+                seeds=seeds,
+                log_path=log_file,
+                resume=resume,
+                verbose=verbose,
+                max_workers=workers,
+                executor=pool,
+                project_root=root,
+            )
+            summ["rollouts_budget"] = n_roll
+            summ["heuristic_enabled"] = bool(use_h_leaf)
+            rows.append(summ)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
 
     df = pd.DataFrame(rows)
     df.to_csv(tables_dir / "ablation2_mcts_budget_heuristic.csv", index=False, encoding="utf-8-sig")
@@ -1462,8 +1777,9 @@ def run_ablation_policy_vs_search(
     project_root: str | Path | None = None,
     resume: bool = True,
     verbose: bool = True,
+    max_workers: int = 1,
 ) -> pd.DataFrame:
-    """Ablation 3: Policy-Only (CNN 5B) vs Policy+PUCT (5B+MCTS) vs AlphaGo 7A (Mark Liu Ch. 10–18)."""
+    """Ablation 3: Policy-Only (CNN Cấp 5) vs Policy+PUCT (Cấp 5 + MCTS) vs AlphaGo Cấp 7 (Mark Liu Ch. 10–18)."""
     root = Path(project_root) if project_root is not None else Path(__file__).resolve().parents[1]
     logs_dir = root / "results" / "logs" / "tournament" / "ablations"
     tables_dir = root / "results" / "tables" / "tournament" / "ablations"
@@ -1509,6 +1825,7 @@ def run_ablation_policy_vs_search(
             ),
             config_summary="Pure ResNet Policy (no tactical shortcut, no search)",
             budget_note="1 forward pass",
+            descriptor={"kind": "ablation_policy_variant", "variant_id": "L5_PolicyOnly_NoShortcut"},
         ),
         AgentSpec(
             agent_id="L5_PolicyOnly_Shortcut",
@@ -1520,6 +1837,7 @@ def run_ablation_policy_vs_search(
             ),
             config_summary="ResNet Policy + Tactical Shortcut (no tree search)",
             budget_note="1 forward pass",
+            descriptor={"kind": "ablation_policy_variant", "variant_id": "L5_PolicyOnly_Shortcut"},
         ),
         AgentSpec(
             agent_id="L5_Policy_Plus_PUCT",
@@ -1531,10 +1849,11 @@ def run_ablation_policy_vs_search(
             ),
             config_summary="ResNet Policy + PUCT-MCTS (150 sims, cap=0.5s)",
             budget_note="150 sims / 0.5s cap",
+            descriptor={"kind": "ablation_policy_variant", "variant_id": "L5_Policy_Plus_PUCT"},
         ),
         AgentSpec(
             agent_id="L7_AlphaGo_EnsemblePUCT",
-            display_name="AlphaGo 7A (5B+6A+PUCT)",
+            display_name="AlphaGo Cấp 7 (L5+L6+PUCT)",
             level=7,
             mode="ablation",
             factory=lambda seed, _c=shared_cnn, _r=shared_rl: AlphaGoAgent(
@@ -1548,27 +1867,41 @@ def run_ablation_policy_vs_search(
                 rl_prior_weight=0.35,
                 seed=seed,
             ),
-            config_summary="Ensemble Prior (5B+6A) + Value Blend + PUCT (200 sims, cap=0.5s)",
+            config_summary="Ensemble Prior (L5+L6) + Value Blend + PUCT (200 sims, cap=0.5s)",
             budget_note="200 sims / 0.5s cap",
+            descriptor={"kind": "ablation_policy_variant", "variant_id": "L7_AlphaGo_EnsemblePUCT"},
         ),
     ]
 
+    workers = max(1, int(max_workers))
+    if workers > 1:
+        _ensure_pythonpath(root)
+    pool: ProcessPoolExecutor | None = (
+        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init) if workers > 1 else None
+    )
     rows: list[dict[str, Any]] = []
-    for var_spec in variants:
-        for opp in opp_specs:
-            log_file = logs_dir / f"ablation3_{var_spec.agent_id}_vs_{opp.agent_id}.jsonl"
-            summ, _ = run_pair_match(
-                spec_a=var_spec,
-                spec_b=opp,
-                games_per_pair=games_per_config,
-                seeds=seeds,
-                log_path=log_file,
-                resume=resume,
-                verbose=verbose,
-            )
-            summ["variant"] = var_spec.display_name
-            summ["opponent"] = opp.agent_id
-            rows.append(summ)
+    try:
+        for var_spec in variants:
+            for opp in opp_specs:
+                log_file = logs_dir / f"ablation3_{var_spec.agent_id}_vs_{opp.agent_id}.jsonl"
+                summ, _ = run_pair_match(
+                    spec_a=var_spec,
+                    spec_b=opp,
+                    games_per_pair=games_per_config,
+                    seeds=seeds,
+                    log_path=log_file,
+                    resume=resume,
+                    verbose=verbose,
+                    max_workers=workers,
+                    executor=pool,
+                    project_root=root,
+                )
+                summ["variant"] = var_spec.display_name
+                summ["opponent"] = opp.agent_id
+                rows.append(summ)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
 
     df = pd.DataFrame(rows)
     df.to_csv(tables_dir / "ablation3_policy_vs_puct_alphago.csv", index=False, encoding="utf-8-sig")
@@ -1665,7 +1998,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_ablation_mcts_budget_heuristic(
             games_per_config=args.ablation_games, seeds=args.seeds, resume=resume, verbose=True
         )
-        print("\n=== RUNNING ABLATION 3: Policy-Only vs Policy+PUCT vs AlphaGo 7A ===")
+        print("\n=== RUNNING ABLATION 3: Policy-Only vs Policy+PUCT vs AlphaGo Cấp 7 ===")
         run_ablation_policy_vs_search(
             games_per_config=args.ablation_games, seeds=args.seeds, resume=resume, verbose=True
         )

@@ -5,4 +5,4 @@
 4,L4_MCTS,Time budget = 200 ms/move,"UCT + Heavy Playout + PW (C=1.414, time=200ms)",Default 300 rollouts/move,"Default UCT + Heavy Playout + PW (300 rollouts, C=1.414)",0.0,0.0
 5,L5_CNN,1 forward pass (~1.5 ms/move),4-ch ResNet-4x64 Policy + Tactical Shortcut (no tree search),1 forward pass (~1.5 ms/move),4-ch ResNet-4x64 Policy + Tactical Shortcut (no tree search),185.0,1.168
 6,L6_RL,1 forward pass (~1.0 ms/move),"4-ch ResGN-3x48 Masked Dueling DQN (Boltzmann-DQfD, eps=0)",1 forward pass (~1.0 ms/move),"4-ch ResGN-3x48 Masked Dueling DQN (Boltzmann-DQfD, eps=0)",449.3,0.62
-7,L7_AlphaGo,Time budget = 200 ms/move,Ensemble Prior (5B+6A) + PUCT + Value Blend 0.25 (time=200ms),Default 200 sims / 0.5s cap,"Default Ensemble Prior (5B+6A) + PUCT (200 sims, cap=0.5s)",634.3,1.789
+7,L7_AlphaGo,Time budget = 200 ms/move,Ensemble Prior (L5+L6) + PUCT + Value Blend 0.25 (time=200ms),Default 200 sims / 0.5s cap,"Default Ensemble Prior (L5+L6) + PUCT (200 sims, cap=0.5s)",634.3,1.789

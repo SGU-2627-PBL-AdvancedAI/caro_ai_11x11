@@ -21,7 +21,7 @@ except ImportError:
     from caro_env import CaroEnv
     from heuristic import evaluate_board, evaluate_cell_threat, get_candidate_actions
 
-# Thử nạp PyTorch cho kiến trúc Residual Policy CNN đa kênh (Phương án 5B)
+# Thử nạp PyTorch cho kiến trúc Residual Policy CNN đa kênh (Cấp 5)
 try:
     import torch
     import torch.nn as nn
@@ -132,7 +132,7 @@ def encode_board_multichannel(
 ) -> np.ndarray:
     """
     Mã hóa bàn cờ đa kênh chuẩn hóa góc nhìn người chơi hiện tại ở định dạng NCHW `(C, H, W)`
-    dành cho Residual Policy CNN (Phương án 5B):
+    dành cho Residual Policy CNN (Cấp 5):
       - Kênh 0: Quân của người chơi đang tới lượt (`board == current_player`)
       - Kênh 1: Quân của đối thủ (`board == -current_player`)
       - Kênh 2: Các ô trống (`board == 0`) — loại bỏ trùng lặp giá trị 0 với zero-padding biên
@@ -703,7 +703,7 @@ def generate_expert_train_val_test_datasets(
         (không tăng cường D4) để đánh giá trung thực khả năng tổng quát hóa.
       - Khóa D4 toàn cục đảm bảo 0% trạng thái (kể cả biến thể quay/lật) của `Val` hoặc `Test`
         xuất hiện trong `Train`.
-      - Dữ liệu đa kênh `(N, in_channels, board_size, board_size)` phục vụ PyTorch ResNet (5B).
+      - Dữ liệu đa kênh `(N, in_channels, board_size, board_size)` phục vụ PyTorch ResNet (Cấp 5).
     """
     if save_path is not None and load_if_exists and Path(save_path).exists():
         return load_expert_train_val_test_datasets(save_path)
@@ -1335,7 +1335,7 @@ if HAS_PYTORCH:
     class TorchPolicyResNet(nn.Module):
         """
         Mạng Residual Policy CNN thuần tích chập (Fully Convolutional Policy ResNet) cho Caro 11x11
-        (Phương án 5B):
+        (Cấp 5):
           - Đầu vào: `(B, in_channels, H, W)` với `in_channels = 4` (`my`, `opp`, `empty`, `last_move`).
           - Stem: `Conv3x3(in_channels -> channels) + BN + ReLU`.
           - Residual Tower: `num_res_blocks` khối Residual 3x3 (với 4 block, trường nhìn đạt 19x19,
@@ -1449,7 +1449,7 @@ class CNNAgent(BaseAgent):
     """
     Tác tử Cấp 5: Mạng Nơ-ron Tích chập (Convolutional Policy Network) cho Caro 11x11.
     Hỗ trợ đồng thời:
-      - Kiến trúc nâng cấp 5B (`model_type="resnet"`, `backend="pytorch"`): Residual Policy CNN
+      - Kiến trúc nâng cấp 5 (`model_type="resnet"`, `backend="pytorch"`): Residual Policy CNN
         4 kênh `(my, opp, empty, last_move)`, lưu/nạp `.pt`, tích hợp PUCT-MCTS nhiều tầng.
       - Kiến trúc tham chiếu cũ (`model_type="fast"|"strong"`, `backend="numpy"|"keras"`):
         tương thích ngược hoàn toàn với các checkpoint `.npz` và kiểm thử cũ.
@@ -1665,7 +1665,7 @@ class CNNAgent(BaseAgent):
     def encode_env_state_multichannel(self, env: CaroEnv) -> np.ndarray:
         """
         Biểu diễn trạng thái bàn cờ `env` thành tensor đa kênh `(1, in_channels, H, W)`
-        cho mạng PyTorch Residual Policy CNN (Phương án 5B).
+        cho mạng PyTorch Residual Policy CNN (Cấp 5).
         """
         if env.board_size != self.board_size:
             raise ValueError(
@@ -2341,7 +2341,7 @@ class CNNAgent(BaseAgent):
     ) -> dict[str, list[float]]:
         """
         Huấn luyện mạng CNN Policy Network trên tập dữ liệu `(X, y)`.
-        Hỗ trợ đồng thời backend PyTorch (ResNet đa kênh 5B), Keras và NumPy.
+        Hỗ trợ đồng thời backend PyTorch (ResNet đa kênh 5), Keras và NumPy.
         """
         if self.backend == "pytorch" and self.torch_model is not None:
             return self._train_pytorch(
@@ -2464,7 +2464,7 @@ class CNNAgent(BaseAgent):
         return history
 
     def save_model(self, path: str | Path, metadata: dict[str, Any] | None = None) -> Path:
-        """Lưu mô hình ra đĩa (`.pt` cho PyTorch ResNet 5B, `.npz`/`.keras` cho NumPy/Keras)."""
+        """Lưu mô hình ra đĩa (`.pt` cho PyTorch ResNet Cấp 5, `.npz`/`.keras` cho NumPy/Keras)."""
         out_path = Path(path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -96,7 +96,7 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(
-        description="Huấn luyện và đánh giá Level 5B PyTorch Residual Policy CNN cho Caro 11x11."
+        description="Huấn luyện và đánh giá Level 5 PyTorch Residual Policy CNN cho Caro 11x11."
     )
     parser.add_argument("--train-games", type=int, default=160, help="Số ván chuyên gia cho tập Train.")
     parser.add_argument("--val-games", type=int, default=25, help="Số ván độc lập cho tập Validation.")
@@ -156,7 +156,7 @@ def main() -> None:
         f"val={len(y_val)} | test={len(y_test)} | dedup_removed={meta['dedup_removed_total']}"
     )
 
-    print("\n=== [2/5] Khởi tạo và huấn luyện PyTorch Residual Policy CNN (Level 5B) ===")
+    print("\n=== [2/5] Khởi tạo và huấn luyện PyTorch Residual Policy CNN (Level 5) ===")
     agent = CNNAgent(
         name="Level5B_ResNet_Policy",
         model_type="resnet",
@@ -227,7 +227,7 @@ def main() -> None:
     if args.arena_games > 0:
         print(f"\n=== [5/5] Đấu kiểm chứng ({args.arena_games} ván cân bằng X/O) ===")
         pure_agent = CNNAgent(
-            name="Lv5B_Pure_CNN",
+            name="Lv5_Pure_CNN",
             model_path=saved_ckpt,
             use_tactical_shortcut=False,
             use_mix_mcts=False,
@@ -256,7 +256,7 @@ def main() -> None:
                 n_games=args.arena_games,
             )
             print(
-                f"Pure CNN (5B) vs Old Strong Pure CNN: "
+                f"Pure CNN (Cấp 5) vs Old Strong Pure CNN: "
                 f"{r_old['wins']}W-{r_old['draws']}D-{r_old['losses']}L ({r_old['score_pct']:.1f}%) | "
                 f"avg_moves={r_old['avg_moves']:.1f}"
             )
@@ -268,7 +268,7 @@ def main() -> None:
         )
 
         puct_agent = CNNAgent(
-            name="Lv5B_CNN_PUCT",
+            name="Lv5_CNN_PUCT",
             model_path=saved_ckpt,
             use_tactical_shortcut=False,
             use_mix_mcts=True,
@@ -282,7 +282,7 @@ def main() -> None:
             f"avg_moves={r3['avg_moves']:.1f} | avg_ms={r3['avg_ms']:.1f} p95={r3['p95_ms']:.1f}"
         )
 
-    print(f"\nHoàn tất toàn bộ quy trình Cấp 5B trong {time.perf_counter() - t_start:.1f}s.")
+    print(f"\nHoàn tất toàn bộ quy trình Cấp 5 trong {time.perf_counter() - t_start:.1f}s.")
 
 
 if __name__ == "__main__":
