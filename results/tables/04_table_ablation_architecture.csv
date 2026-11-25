@@ -1,0 +1,7 @@
+﻿Configuration,Games,A Wins,B Wins,Draws,Win Rate (%),Draw Rate (%),Loss Rate (%),Score Rate (%),CI95 (±%),Avg Moves,Avg Time A (ms)
+1. Strong Pure (No SymAug),100,18,82,0,18.0,0.0,82.0,18.0,7.57,20.82,0.493
+2. Fast Pure (With SymAug),100,52,48,0,52.0,0.0,48.0,52.0,9.84,19.2,0.495
+3. Strong Pure (With SymAug),100,46,54,0,46.0,0.0,54.0,46.0,9.82,18.84,0.513
+4. Fast Hybrid (Det),100,97,1,2,97.0,2.0,1.0,98.0,2.38,19.72,0.678
+5. Strong Hybrid (Stoch),100,92,7,1,92.0,1.0,7.0,92.5,5.09,23.78,0.721
+6. Strong Hybrid (Det),100,98,2,0,98.0,0.0,2.0,98.0,2.76,19.34,0.681

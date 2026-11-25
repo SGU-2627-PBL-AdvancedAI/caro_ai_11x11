@@ -1,0 +1,6 @@
+﻿Matchup,Games,A wins,B wins,Draws,A win rate (%),B win rate (%),Draw rate (%),A Score rate (%),CI95 (±%),Avg moves,Avg A decision (ms),Avg B decision (ms)
+1. Strong Pure CNN (No Tactical) vs Random,100,95,5,0,95.0,5.0,0.0,95.0,4.29,17.17,0.516,0.012
+2. Fast Hybrid CNN vs Non-Expert (50%),100,97,2,1,97.0,2.0,1.0,97.5,2.91,19.81,0.689,0.253
+3. Strong Hybrid CNN vs Non-Expert (50%),100,99,1,0,99.0,1.0,0.0,99.0,1.96,20.59,0.67,0.242
+4. Strong Hybrid CNN vs Fast Hybrid CNN,100,40,52,8,40.0,52.0,8.0,44.0,9.37,52.84,0.765,0.78
+5. Strong CNN + Mixed MCTS vs Strong Hybrid CNN,100,64,32,4,64.0,32.0,4.0,66.0,9.12,45.21,31.473,0.964
