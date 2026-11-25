@@ -1,0 +1,13 @@
+﻿case,top_action,expected,passed,target_prob,top_prob
+win1_horizontal,60,55 60,True,0.5415,0.451
+win1_vertical,71,16 71,True,0.6423,0.3861
+win1_diagonal,72,12 72,True,0.9198,0.7817
+win1_gapped,58,58,True,0.6193,0.6193
+block1_horizontal,60,55 60,True,0.9479,0.8778
+block1_vertical,71,16 71,True,0.9859,0.7937
+block1_diagonal,72,12 72,True,0.9882,0.9343
+block1_gapped,58,58,True,0.8348,0.8348
+open3_attack_h,62,58 62,True,0.9777,0.653
+open3_attack_d,84,36 84,True,0.9317,0.7669
+open3_block_h,58,58 62,True,0.9867,0.6728
+open3_block_d,84,36 84,True,0.7078,0.4995

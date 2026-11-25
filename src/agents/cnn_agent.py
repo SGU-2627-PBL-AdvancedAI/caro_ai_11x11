@@ -1,18 +1,38 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import math
 from pathlib import Path
+import random
 import sys
 import time
 from typing import Any
 
 import numpy as np
 
-from agents.base_agent import BaseAgent
-from caro_env import CaroEnv
-from heuristic import evaluate_board, evaluate_cell_threat, get_candidate_actions
+try:
+    from .base_agent import BaseAgent
+    from ..caro_env import CaroEnv
+    from ..heuristic import evaluate_board, evaluate_cell_threat, get_candidate_actions
+except ImportError:
+    from agents.base_agent import BaseAgent
+    from caro_env import CaroEnv
+    from heuristic import evaluate_board, evaluate_cell_threat, get_candidate_actions
+
+# Thử nạp PyTorch cho kiến trúc Residual Policy CNN đa kênh (Phương án 5B)
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    HAS_PYTORCH = True
+except Exception:
+    torch = None
+    nn = None
+    F = None
+    HAS_PYTORCH = False
 
 # Thử nạp TensorFlow/Keras (nếu môi trường đã cài đặt như trong sách AlphaGo Simplified Chương 10).
 # Nếu chưa cài đặt hoặc lỗi phụ thuộc (ví dụ protobuf), hệ thống tự động dùng backend NumPy CNN
@@ -100,6 +120,72 @@ def augment_state_action(
         flip_action_grid = np.fliplr(rot_action_grid)
         flip_action = int(np.flatnonzero(flip_action_grid.reshape(-1))[0])
         samples.append((flip_board.reshape(board_size, board_size, 1).copy(), flip_action))
+
+    return samples
+
+
+def encode_board_multichannel(
+    board: np.ndarray,
+    current_player: int = 1,
+    last_action: int | None = None,
+    in_channels: int = 4,
+) -> np.ndarray:
+    """
+    Mã hóa bàn cờ đa kênh chuẩn hóa góc nhìn người chơi hiện tại ở định dạng NCHW `(C, H, W)`
+    dành cho Residual Policy CNN (Phương án 5B):
+      - Kênh 0: Quân của người chơi đang tới lượt (`board == current_player`)
+      - Kênh 1: Quân của đối thủ (`board == -current_player`)
+      - Kênh 2: Các ô trống (`board == 0`) — loại bỏ trùng lặp giá trị 0 với zero-padding biên
+      - Kênh 3 (nếu `in_channels >= 4`): One-hot nước đi vừa đánh (`last_action`), giúp mạng nhận diện
+        ngay trọng tâm chiến thuật mới nhất trên bàn cờ.
+    """
+    if current_player not in (1, -1):
+        raise ValueError(f"current_player phải là 1 hoặc -1, nhận được: {current_player}")
+    if in_channels not in (3, 4):
+        raise ValueError(f"in_channels phải là 3 hoặc 4, nhận được: {in_channels}")
+
+    arr = np.asarray(board, dtype=np.int8)
+    n = arr.shape[0]
+    state = np.zeros((in_channels, n, n), dtype=np.float32)
+    state[0] = (arr == current_player).astype(np.float32)
+    state[1] = (arr == -current_player).astype(np.float32)
+    state[2] = (arr == 0).astype(np.float32)
+
+    if in_channels == 4 and last_action is not None and 0 <= int(last_action) < n * n:
+        lr, lc = divmod(int(last_action), n)
+        state[3, lr, lc] = 1.0
+
+    return state
+
+
+def augment_multichannel_state_action(
+    state_chw: np.ndarray,
+    action: int,
+    board_size: int = 11,
+) -> list[tuple[np.ndarray, int]]:
+    """
+    Tăng cường 8 phép đối xứng D4 (4 góc quay x 2 phép lật ngang) cho tensor đa kênh `(C, H, W)`
+    và nhãn hành động tương ứng.
+    """
+    arr = np.asarray(state_chw, dtype=np.float32)
+    if arr.ndim != 3 or arr.shape[1] != board_size or arr.shape[2] != board_size:
+        raise ValueError(f"state_chw phải có shape (C, {board_size}, {board_size}), nhận {arr.shape}.")
+
+    action_grid = np.zeros((board_size, board_size), dtype=np.int8)
+    r, c = divmod(int(action), board_size)
+    action_grid[r, c] = 1
+
+    samples: list[tuple[np.ndarray, int]] = []
+    for k in range(4):
+        rot_state = np.rot90(arr, k=k, axes=(1, 2))
+        rot_act_grid = np.rot90(action_grid, k=k)
+        rot_act = int(np.flatnonzero(rot_act_grid.reshape(-1))[0])
+        samples.append((rot_state.copy(), rot_act))
+
+        flip_state = rot_state[:, :, ::-1]
+        flip_act_grid = np.fliplr(rot_act_grid)
+        flip_act = int(np.flatnonzero(flip_act_grid.reshape(-1))[0])
+        samples.append((flip_state.copy(), flip_act))
 
     return samples
 
@@ -431,6 +517,316 @@ def load_expert_train_val_datasets(
             if k not in ("X_train", "y_train", "X_val", "y_val")
         }
     return X_train, y_train, X_val, y_val, meta
+
+
+def _canonical_d4_key(
+    board: np.ndarray,
+    current_player: int,
+    last_action: int | None,
+) -> bytes:
+    """
+    Tính khóa bất biến theo nhóm đối xứng D4 (8 phép quay/lật) cho cặp `(bàn cờ chuẩn hóa, last_action)`.
+    Dùng để khử trùng lặp tuyệt đối và đảm bảo 0% rò rỉ dữ liệu giữa train / val / test
+    ngay cả sau khi áp dụng tăng cường đối xứng D4 trên tập train.
+    """
+    canonical = (np.asarray(board, dtype=np.int8) * int(current_player)).astype(np.int8)
+    n = canonical.shape[0]
+    lm_grid = np.zeros((n, n), dtype=np.int8)
+    if last_action is not None and 0 <= int(last_action) < n * n:
+        r, c = divmod(int(last_action), n)
+        lm_grid[r, c] = 1
+
+    best_bytes: bytes | None = None
+    for k in range(4):
+        rb = np.rot90(canonical, k=k)
+        rl = np.rot90(lm_grid, k=k)
+        cand1 = rb.tobytes() + rl.tobytes()
+        if best_bytes is None or cand1 < best_bytes:
+            best_bytes = cand1
+
+        fb = np.fliplr(rb)
+        fl = np.fliplr(rl)
+        cand2 = fb.tobytes() + fl.tobytes()
+        if cand2 < best_bytes:
+            best_bytes = cand2
+
+    assert best_bytes is not None
+    return best_bytes
+
+
+def _build_teacher_agent(teacher: str, seed: int, candidate_radius: int):
+    """Khởi tạo tác tử chuyên gia (teacher) phục vụ sinh dữ liệu học có giám sát."""
+    if teacher == "legacy":
+        return None
+    if teacher == "rule_based":
+        try:
+            from .rule_based_agent import RuleBasedAgent
+        except ImportError:
+            from agents.rule_based_agent import RuleBasedAgent
+        return RuleBasedAgent(
+            name="Teacher_RuleBased",
+            candidate_radius=candidate_radius,
+            seed=seed,
+            tie_break_eps=1e-6,
+        )
+    if teacher == "minimax":
+        try:
+            from .minimax_agent import MinimaxAgent
+        except ImportError:
+            from agents.minimax_agent import MinimaxAgent
+        return MinimaxAgent(
+            name="Teacher_Minimax",
+            max_depth=3,
+            candidate_radius=candidate_radius,
+            time_limit_sec=0.5,
+            max_branch_root=14,
+            max_branch_inner=10,
+            seed=seed,
+            tie_break_eps=1e-6,
+        )
+    raise ValueError(f"teacher không hợp lệ: {teacher!r}. Chọn 'rule_based', 'minimax', 'mixed', hoặc 'legacy'.")
+
+
+def _collect_teacher_games(
+    num_games: int,
+    teacher: str,
+    board_size: int,
+    win_length: int,
+    in_channels: int,
+    candidate_radius: int,
+    opening_random_plies: int,
+    opponent_noise_prob: float,
+    seen_d4_keys: set[bytes],
+    seed: int,
+) -> tuple[list[np.ndarray], list[int], int, int]:
+    """
+    Sinh các mẫu `(state_chw, expert_action)` từ `num_games` ván đấu độc lập,
+    khử trùng lặp theo khóa bất biến D4 `seen_d4_keys`.
+    Trả về `(states, actions, raw_recorded, dedup_skipped)`.
+    """
+    rng = np.random.default_rng(seed)
+    states: list[np.ndarray] = []
+    actions: list[int] = []
+    raw_recorded = 0
+    dedup_skipped = 0
+
+    center = board_size // 2
+    opening_zone = [
+        r * board_size + c
+        for r in range(max(0, center - 2), min(board_size, center + 3))
+        for c in range(max(0, center - 2), min(board_size, center + 3))
+    ]
+
+    rb_teacher = _build_teacher_agent("rule_based", seed, candidate_radius) if teacher in ("rule_based", "mixed") else None
+    mm_teacher = _build_teacher_agent("minimax", seed + 777, candidate_radius) if teacher in ("minimax", "mixed") else None
+
+    for g in range(num_games):
+        env = CaroEnv(board_size=board_size, win_length=win_length)
+        # Chọn chuyên gia cho ván này (nếu teacher="mixed": 70% RuleBased + 30% Minimax)
+        if teacher == "mixed":
+            use_mm = (g % 10) < 3
+            active_teacher = mm_teacher if use_mm else rb_teacher
+        elif teacher == "minimax":
+            active_teacher = mm_teacher
+        elif teacher == "rule_based":
+            active_teacher = rb_teacher
+        else:
+            active_teacher = None
+
+        # Số bước khai cuộc ngẫu nhiên quanh trung tâm (1..opening_random_plies) để đa dạng hóa thế cờ
+        rand_plies = int(rng.integers(1, opening_random_plies + 1)) if opening_random_plies > 0 else 0
+        # Một bên được gắn nhãn chuyên gia hoàn toàn; bên kia thỉnh thoảng đi nhiễu để tạo thế công/thủ thực tế
+        noisy_side = 1 if (g % 2 == 0) else -1
+
+        while not env.is_terminal():
+            ply = len(env.history)
+            if ply < rand_plies:
+                legal_open = [a for a in opening_zone if env.board[a // board_size, a % board_size] == 0]
+                move = int(rng.choice(legal_open)) if legal_open else int(rng.choice(env.legal_actions()))
+                env.step(move)
+                continue
+
+            # Nếu bên nhiễu tới lượt và tung trúng xác suất nhiễu -> đánh ngẫu nhiên trong vùng ứng viên (không ghi nhãn)
+            if env.current_player == noisy_side and opponent_noise_prob > 0.0 and float(rng.random()) < opponent_noise_prob:
+                cands = get_candidate_actions(env, radius=candidate_radius)
+                move = int(rng.choice(cands)) if cands else int(rng.choice(env.legal_actions()))
+                env.step(move)
+                continue
+
+            # Lấy nước đi chuẩn từ chuyên gia
+            if active_teacher is not None:
+                move = int(active_teacher.select_action(env))
+            else:
+                move = expert_select_action(env, candidate_radius=candidate_radius, rng=rng)
+
+            last_act = env.history[-1] if env.history else None
+            raw_recorded += 1
+            d4_key = _canonical_d4_key(env.board, env.current_player, last_act)
+            if d4_key in seen_d4_keys:
+                dedup_skipped += 1
+            else:
+                seen_d4_keys.add(d4_key)
+                state_chw = encode_board_multichannel(
+                    env.board,
+                    current_player=env.current_player,
+                    last_action=last_act,
+                    in_channels=in_channels,
+                )
+                states.append(state_chw)
+                actions.append(int(move))
+
+            env.step(move)
+
+    return states, actions, raw_recorded, dedup_skipped
+
+
+def generate_expert_train_val_test_datasets(
+    num_train_games: int = 120,
+    num_val_games: int = 20,
+    num_test_games: int = 20,
+    teacher: str = "mixed",
+    board_size: int = 11,
+    win_length: int = 5,
+    in_channels: int = 4,
+    candidate_radius: int = 2,
+    opening_random_plies: int = 3,
+    opponent_noise_prob: float = 0.25,
+    augment_train_symmetry: bool = True,
+    seed: int = 42,
+    save_path: str | Path | None = None,
+    load_if_exists: bool = True,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    """
+    Sinh bộ dữ liệu học có giám sát chuẩn hóa 3 tập độc lập `(Train / Val / Test)` theo cấp độ
+    ván đấu (Game-Level Split) kèm khử trùng lặp bất biến D4 (D4-Invariant Deduplication):
+      - Tập `Val` và `Test` được sinh từ các ván đấu hoàn toàn tách biệt, giữ nguyên mẫu gốc
+        (không tăng cường D4) để đánh giá trung thực khả năng tổng quát hóa.
+      - Khóa D4 toàn cục đảm bảo 0% trạng thái (kể cả biến thể quay/lật) của `Val` hoặc `Test`
+        xuất hiện trong `Train`.
+      - Dữ liệu đa kênh `(N, in_channels, board_size, board_size)` phục vụ PyTorch ResNet (5B).
+    """
+    if save_path is not None and load_if_exists and Path(save_path).exists():
+        return load_expert_train_val_test_datasets(save_path)
+
+    seen_d4_keys: set[bytes] = set()
+
+    # Sinh Test và Val trước để bảo đảm các mẫu đánh giá độc lập không bị loại bởi tập Train
+    test_states, test_actions, raw_test, dedup_test = _collect_teacher_games(
+        num_games=num_test_games,
+        teacher=teacher,
+        board_size=board_size,
+        win_length=win_length,
+        in_channels=in_channels,
+        candidate_radius=candidate_radius,
+        opening_random_plies=opening_random_plies,
+        opponent_noise_prob=opponent_noise_prob,
+        seen_d4_keys=seen_d4_keys,
+        seed=seed + 200000,
+    )
+    val_states, val_actions, raw_val, dedup_val = _collect_teacher_games(
+        num_games=num_val_games,
+        teacher=teacher,
+        board_size=board_size,
+        win_length=win_length,
+        in_channels=in_channels,
+        candidate_radius=candidate_radius,
+        opening_random_plies=opening_random_plies,
+        opponent_noise_prob=opponent_noise_prob,
+        seen_d4_keys=seen_d4_keys,
+        seed=seed + 100000,
+    )
+    train_states_raw, train_actions_raw, raw_train, dedup_train = _collect_teacher_games(
+        num_games=num_train_games,
+        teacher=teacher,
+        board_size=board_size,
+        win_length=win_length,
+        in_channels=in_channels,
+        candidate_radius=candidate_radius,
+        opening_random_plies=opening_random_plies,
+        opponent_noise_prob=opponent_noise_prob,
+        seen_d4_keys=seen_d4_keys,
+        seed=seed,
+    )
+
+    if augment_train_symmetry:
+        train_states: list[np.ndarray] = []
+        train_actions: list[int] = []
+        for s_chw, act in zip(train_states_raw, train_actions_raw):
+            for aug_s, aug_a in augment_multichannel_state_action(s_chw, act, board_size=board_size):
+                train_states.append(aug_s)
+                train_actions.append(aug_a)
+    else:
+        train_states = train_states_raw
+        train_actions = train_actions_raw
+
+    empty_shape = (0, in_channels, board_size, board_size)
+    X_train = np.asarray(train_states, dtype=np.float32) if train_states else np.empty(empty_shape, dtype=np.float32)
+    y_train = np.asarray(train_actions, dtype=np.int64)
+    X_val = np.asarray(val_states, dtype=np.float32) if val_states else np.empty(empty_shape, dtype=np.float32)
+    y_val = np.asarray(val_actions, dtype=np.int64)
+    X_test = np.asarray(test_states, dtype=np.float32) if test_states else np.empty(empty_shape, dtype=np.float32)
+    y_test = np.asarray(test_actions, dtype=np.int64)
+
+    metadata: dict[str, Any] = {
+        "board_size": int(board_size),
+        "win_length": int(win_length),
+        "in_channels": int(in_channels),
+        "teacher": str(teacher),
+        "num_train_games": int(num_train_games),
+        "num_val_games": int(num_val_games),
+        "num_test_games": int(num_test_games),
+        "raw_train_samples": int(raw_train),
+        "raw_val_samples": int(raw_val),
+        "raw_test_samples": int(raw_test),
+        "dedup_removed_total": int(dedup_train + dedup_val + dedup_test),
+        "train_unique_samples": int(len(train_states_raw)),
+        "train_samples": int(len(y_train)),
+        "val_samples": int(len(y_val)),
+        "test_samples": int(len(y_test)),
+        "augment_train_symmetry": bool(augment_train_symmetry),
+        "opening_random_plies": int(opening_random_plies),
+        "opponent_noise_prob": float(opponent_noise_prob),
+        "seed": int(seed),
+    }
+
+    if save_path is not None:
+        out_path = Path(save_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        save_payload: dict[str, Any] = {
+            "X_train": X_train,
+            "y_train": y_train,
+            "X_val": X_val,
+            "y_val": y_val,
+            "X_test": X_test,
+            "y_test": y_test,
+        }
+        for k, v in metadata.items():
+            save_payload[k] = np.array(v)
+        np.savez_compressed(out_path, **save_payload)
+
+    return X_train, y_train, X_val, y_val, X_test, y_test, metadata
+
+
+def load_expert_train_val_test_datasets(
+    path: str | Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    """Nạp lại bộ dữ liệu 3 tập `(X_train, y_train, X_val, y_val, X_test, y_test, metadata)` từ `.npz`."""
+    in_path = Path(path)
+    if not in_path.exists():
+        raise FileNotFoundError(f"Không tìm thấy file dữ liệu tại: {in_path}")
+    with np.load(in_path, allow_pickle=False) as d:
+        X_train = np.asarray(d["X_train"], dtype=np.float32)
+        y_train = np.asarray(d["y_train"], dtype=np.int64)
+        X_val = np.asarray(d["X_val"], dtype=np.float32)
+        y_val = np.asarray(d["y_val"], dtype=np.int64)
+        X_test = np.asarray(d["X_test"], dtype=np.float32)
+        y_test = np.asarray(d["y_test"], dtype=np.int64)
+        meta = {
+            k: d[k].item()
+            for k in d.files
+            if k not in ("X_train", "y_train", "X_val", "y_val", "X_test", "y_test")
+        }
+    return X_train, y_train, X_val, y_val, X_test, y_test, meta
 
 
 def export_dataset_to_csv(
@@ -919,11 +1315,144 @@ def _fast_check_five(board: np.ndarray, r: int, c: int, player: int, win_length:
     return False
 
 
+if HAS_PYTORCH:
+
+    class TorchResidualBlock(nn.Module):
+        """Khối Residual 3x3 chuẩn cho bàn cờ Caro (bảo toàn kích thước không gian HxW)."""
+
+        def __init__(self, channels: int):
+            super().__init__()
+            self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+            self.bn1 = nn.BatchNorm2d(channels)
+            self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
+            self.bn2 = nn.BatchNorm2d(channels)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            out = F.relu(self.bn1(self.conv1(x)), inplace=True)
+            out = self.bn2(self.conv2(out))
+            return F.relu(out + x, inplace=True)
+
+    class TorchPolicyResNet(nn.Module):
+        """
+        Mạng Residual Policy CNN thuần tích chập (Fully Convolutional Policy ResNet) cho Caro 11x11
+        (Phương án 5B):
+          - Đầu vào: `(B, in_channels, H, W)` với `in_channels = 4` (`my`, `opp`, `empty`, `last_move`).
+          - Stem: `Conv3x3(in_channels -> channels) + BN + ReLU`.
+          - Residual Tower: `num_res_blocks` khối Residual 3x3 (với 4 block, trường nhìn đạt 19x19,
+            phủ trọn bàn cờ 11x11 và giữ tính bất biến tịnh tiến trên toàn bàn).
+          - Policy Head không gian: `Conv1x1(channels -> 16) + BN + ReLU + Conv1x1(16 -> 1) -> Flatten(B, H*W)`.
+            Loại bỏ hoàn toàn nút cổ chai `Flatten(15488) -> Dense(64)` gây overfit ở bản cũ.
+        """
+
+        def __init__(
+            self,
+            board_size: int = 11,
+            in_channels: int = 4,
+            channels: int = 64,
+            num_res_blocks: int = 4,
+        ):
+            super().__init__()
+            self.board_size = int(board_size)
+            self.in_channels = int(in_channels)
+            self.channels = int(channels)
+            self.num_res_blocks = int(num_res_blocks)
+
+            self.stem = nn.Sequential(
+                nn.Conv2d(self.in_channels, self.channels, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(self.channels),
+                nn.ReLU(inplace=True),
+            )
+            self.blocks = nn.Sequential(*[TorchResidualBlock(self.channels) for _ in range(self.num_res_blocks)])
+            self.policy_head = nn.Sequential(
+                nn.Conv2d(self.channels, 16, kernel_size=1, bias=False),
+                nn.BatchNorm2d(16),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(16, 1, kernel_size=1, bias=True),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            h = self.stem(x)
+            h = self.blocks(h)
+            logits = self.policy_head(h)
+            return logits.flatten(start_dim=1)
+
+else:
+
+    class TorchResidualBlock:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("Cần cài đặt PyTorch để sử dụng TorchResidualBlock.")
+
+    class TorchPolicyResNet:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("Cần cài đặt PyTorch để sử dụng TorchPolicyResNet.")
+
+
+class _PUCTNode:
+    """Nút trong cây tìm kiếm PUCT-MCTS chuẩn AlphaGo định hướng bởi mạng CNN Policy."""
+
+    __slots__ = (
+        "parent",
+        "action_from_parent",
+        "player_just_moved",
+        "prior",
+        "visits",
+        "wins",
+        "children",
+        "is_expanded",
+    )
+
+    def __init__(
+        self,
+        parent: _PUCTNode | None = None,
+        action_from_parent: int | None = None,
+        player_just_moved: int = 0,
+        prior: float = 0.0,
+    ):
+        self.parent = parent
+        self.action_from_parent = action_from_parent
+        self.player_just_moved = player_just_moved
+        self.prior = float(prior)
+        self.visits: int = 0
+        self.wins: float = 0.0
+        self.children: dict[int, _PUCTNode] = {}
+        self.is_expanded: bool = False
+
+    def expand(self, actions_and_priors: list[tuple[int, float]], next_player: int) -> None:
+        for act, prior in actions_and_priors:
+            self.children[act] = _PUCTNode(
+                parent=self,
+                action_from_parent=act,
+                player_just_moved=next_player,
+                prior=prior,
+            )
+        self.is_expanded = True
+
+    def select_child_puct(self, c_puct: float, fpu_reduction: float = 0.15) -> _PUCTNode:
+        sqrt_n = math.sqrt(self.visits + 1.0)
+        parent_q = (self.wins / self.visits) if self.visits > 0 else 0.5
+        fpu = max(0.0, parent_q - fpu_reduction) if self.visits > 0 else 0.5
+
+        best_score = -math.inf
+        best_child: _PUCTNode | None = None
+        for child in self.children.values():
+            q_val = (child.wins / child.visits) if child.visits > 0 else fpu
+            u_val = c_puct * child.prior * (sqrt_n / (1.0 + child.visits))
+            score = q_val + u_val
+            if score > best_score:
+                best_score = score
+                best_child = child
+        assert best_child is not None
+        return best_child
+
+
 class CNNAgent(BaseAgent):
     """
     Tác tử Cấp 5: Mạng Nơ-ron Tích chập (Convolutional Policy Network) cho Caro 11x11.
-    Xây dựng dựa trên kiến trúc Deep Learning Chương 10 ("Policy Networks in Tic Tac Toe")
-    trong sách *AlphaGo Simplified: Rule-Based AI and Deep Learning in Everyday Games* (Mark Liu).
+    Hỗ trợ đồng thời:
+      - Kiến trúc nâng cấp 5B (`model_type="resnet"`, `backend="pytorch"`): Residual Policy CNN
+        4 kênh `(my, opp, empty, last_move)`, lưu/nạp `.pt`, tích hợp PUCT-MCTS nhiều tầng.
+      - Kiến trúc tham chiếu cũ (`model_type="fast"|"strong"`, `backend="numpy"|"keras"`):
+        tương thích ngược hoàn toàn với các checkpoint `.npz` và kiểm thử cũ.
     """
 
     def __init__(
@@ -950,13 +1479,24 @@ class CNNAgent(BaseAgent):
         max_rollout_steps: int = 20,
         time_limit_sec: float | None = 1.0,
         seed: int | None = 42,
+        in_channels: int = 4,
+        res_channels: int = 64,
+        num_res_blocks: int = 4,
+        device: str = "auto",
     ):
         super().__init__(name=name)
 
-        if model_type not in ("fast", "strong"):
-            raise ValueError("model_type phải là 'fast' hoặc 'strong'.")
-        if backend not in ("auto", "keras", "numpy"):
-            raise ValueError("backend phải là 'auto', 'keras' hoặc 'numpy'.")
+        # Tự nhận diện checkpoint PyTorch (.pt / .pth) nếu người dùng chỉ truyền model_path
+        if model_path is not None and Path(model_path).suffix.lower() in (".pt", ".pth"):
+            if backend == "auto":
+                backend = "pytorch"
+            if model_type in ("fast", "strong"):
+                model_type = "resnet"
+
+        if model_type not in ("fast", "strong", "resnet"):
+            raise ValueError("model_type phải là 'fast', 'strong' hoặc 'resnet'.")
+        if backend not in ("auto", "pytorch", "keras", "numpy"):
+            raise ValueError("backend phải là 'auto', 'pytorch', 'keras' hoặc 'numpy'.")
         if board_size < 3:
             raise ValueError("board_size phải >= 3.")
         if temperature <= 0.0:
@@ -965,10 +1505,24 @@ class CNNAgent(BaseAgent):
             raise ValueError("candidate_radius phải >= 0 hoặc None.")
         if num_rollouts <= 0:
             raise ValueError("num_rollouts phải > 0.")
+        if in_channels not in (3, 4):
+            raise ValueError("in_channels phải là 3 hoặc 4.")
+        if res_channels < 8 or num_res_blocks < 1:
+            raise ValueError("res_channels phải >= 8 và num_res_blocks phải >= 1.")
 
         self.model_type = model_type
         if backend == "auto":
-            self.backend = "keras" if HAS_TENSORFLOW else "numpy"
+            if model_type == "resnet":
+                if not HAS_PYTORCH:
+                    raise RuntimeError("model_type='resnet' yêu cầu cài đặt PyTorch.")
+                self.backend = "pytorch"
+            else:
+                self.backend = "keras" if HAS_TENSORFLOW else "numpy"
+        elif backend == "pytorch":
+            if not HAS_PYTORCH:
+                raise RuntimeError("Yêu cầu backend='pytorch' nhưng PyTorch chưa được cài đặt.")
+            self.backend = "pytorch"
+            self.model_type = "resnet"
         elif backend == "keras" and not HAS_TENSORFLOW:
             raise RuntimeError("Yêu cầu backend='keras' nhưng TensorFlow chưa được cài đặt.")
         else:
@@ -979,6 +1533,9 @@ class CNNAgent(BaseAgent):
         self.conv_filters = int(conv_filters)
         self.kernel_size = int(kernel_size)
         self.dense_units = int(dense_units)
+        self.in_channels = int(in_channels)
+        self.res_channels = int(res_channels)
+        self.num_res_blocks = int(num_res_blocks)
         self.learning_rate = float(learning_rate)
         self.weight_decay = float(weight_decay)
         self.deterministic = bool(deterministic)
@@ -986,7 +1543,7 @@ class CNNAgent(BaseAgent):
         self.candidate_radius = candidate_radius
         self.use_tactical_shortcut = bool(use_tactical_shortcut)
 
-        # Cấu hình chế độ Mixed MCTS (Mục 10.4 sách AlphaGo Simplified)
+        # Cấu hình chế độ Policy-Guided PUCT-MCTS
         self.use_mix_mcts = bool(use_mix_mcts)
         self.num_rollouts = int(num_rollouts)
         self.exploration_c = float(exploration_c)
@@ -996,20 +1553,30 @@ class CNNAgent(BaseAgent):
 
         self.seed = seed
         self.rng = np.random.default_rng(seed)
+        self._py_rng = random.Random(int(self.rng.integers(0, (1 << 63) - 1)))
 
-        self.numpy_net = NumpyCNNPolicyNetwork(
-            board_size=self.board_size,
-            model_type=self.model_type,
-            conv_filters=self.conv_filters,
-            kernel_size=self.kernel_size,
-            dense_units=self.dense_units,
-            learning_rate=self.learning_rate,
-            weight_decay=self.weight_decay,
-            seed=seed,
-        )
+        self.device_str = device
+        self.device: Any = None
+        self.torch_model: Any = None
+        self.numpy_net: Any = None
         self.keras_model: Any = None
-        if self.backend == "keras":
-            self.keras_model = build_keras_policy_network(
+
+        if self.backend == "pytorch":
+            if device == "auto":
+                self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            else:
+                self.device = torch.device(device)
+            if seed is not None:
+                torch.manual_seed(int(seed))
+            self.torch_model = TorchPolicyResNet(
+                board_size=self.board_size,
+                in_channels=self.in_channels,
+                channels=self.res_channels,
+                num_res_blocks=self.num_res_blocks,
+            ).to(self.device)
+            self.torch_model.eval()
+        else:
+            self.numpy_net = NumpyCNNPolicyNetwork(
                 board_size=self.board_size,
                 model_type=self.model_type,
                 conv_filters=self.conv_filters,
@@ -1017,8 +1584,19 @@ class CNNAgent(BaseAgent):
                 dense_units=self.dense_units,
                 learning_rate=self.learning_rate,
                 weight_decay=self.weight_decay,
+                seed=seed,
             )
-            self._sync_numpy_to_keras()
+            if self.backend == "keras":
+                self.keras_model = build_keras_policy_network(
+                    board_size=self.board_size,
+                    model_type=self.model_type,
+                    conv_filters=self.conv_filters,
+                    kernel_size=self.kernel_size,
+                    dense_units=self.dense_units,
+                    learning_rate=self.learning_rate,
+                    weight_decay=self.weight_decay,
+                )
+                self._sync_numpy_to_keras()
 
         # Chỉ số đo đạc phục vụ Giải đấu và Ablation Study
         self.last_move_time_ms: float = 0.0
@@ -1031,7 +1609,10 @@ class CNNAgent(BaseAgent):
         if model_path is not None:
             self.load_model(model_path)
         elif auto_load_default:
-            default_ckpt = DEFAULT_CHECKPOINT_DIR / f"cnn_{self.model_type}_{self.board_size}x{self.board_size}.npz"
+            if self.backend == "pytorch":
+                default_ckpt = DEFAULT_CHECKPOINT_DIR / "05_cnn_policy_best.pt"
+            else:
+                default_ckpt = DEFAULT_CHECKPOINT_DIR / f"cnn_{self.model_type}_{self.board_size}x{self.board_size}.npz"
             if default_ckpt.exists():
                 self.load_model(default_ckpt)
 
@@ -1081,6 +1662,23 @@ class CNNAgent(BaseAgent):
             )
         return encode_board(env.board, env.current_player).reshape(1, self.board_size, self.board_size, 1)
 
+    def encode_env_state_multichannel(self, env: CaroEnv) -> np.ndarray:
+        """
+        Biểu diễn trạng thái bàn cờ `env` thành tensor đa kênh `(1, in_channels, H, W)`
+        cho mạng PyTorch Residual Policy CNN (Phương án 5B).
+        """
+        if env.board_size != self.board_size:
+            raise ValueError(
+                f"Kích thước bàn cờ của env ({env.board_size}) không khớp với CNNAgent ({self.board_size})."
+            )
+        last_act = env.history[-1] if env.history else None
+        return encode_board_multichannel(
+            env.board,
+            current_player=env.current_player,
+            last_action=last_act,
+            in_channels=self.in_channels,
+        )[np.newaxis, ...]
+
     def predict_probs(
         self,
         env: CaroEnv,
@@ -1088,10 +1686,8 @@ class CNNAgent(BaseAgent):
     ) -> np.ndarray:
         """
         Dự đoán vector phân phối xác suất có độ dài `121` cho các nước đi trên bàn cờ hiện tại.
-        Tuân thủ quy trình tại Mục 10.2.2 ("Test the Policy Network") của sách:
-          1. Chuẩn hóa dấu bàn cờ theo người chơi hiện tại và đưa qua mạng CNN.
-          2. Loại bỏ các ô đã có quân (chỉ giữ lại các ô hợp lệ `legal_actions` hoặc `candidates`).
-          3. Chuẩn hóa lại xác suất trên các ô hợp lệ sao cho tổng bằng `1.0`.
+        Loại bỏ hoàn toàn các ô đã có quân (hoặc ngoài vùng ứng viên nếu `restrict_to_candidates=True`)
+        và chuẩn hóa tổng xác suất về `1.0`.
         """
         legal = env.legal_actions()
         if not legal:
@@ -1104,6 +1700,24 @@ class CNNAgent(BaseAgent):
         )
         if not valid_actions:
             valid_actions = legal
+
+        if self.backend == "pytorch" and self.torch_model is not None:
+            state_nchw = self.encode_env_state_multichannel(env)
+            self.torch_model.eval()
+            with torch.no_grad():
+                tensor_in = torch.from_numpy(state_nchw).to(self.device)
+                logits = self.torch_model(tensor_in).squeeze(0).detach().cpu().numpy().astype(np.float64)
+            valid_logits = logits[valid_actions] / float(self.temperature)
+            valid_logits -= float(np.max(valid_logits))
+            exp_vals = np.exp(valid_logits)
+            total = float(np.sum(exp_vals))
+            masked_probs = np.zeros((self.num_actions,), dtype=np.float32)
+            if total > 1e-12 and np.isfinite(total):
+                masked_probs[valid_actions] = (exp_vals / total).astype(np.float32)
+            else:
+                masked_probs[valid_actions] = np.float32(1.0 / len(valid_actions))
+            self.last_action_probs = masked_probs
+            return masked_probs
 
         state_4d = self.encode_env_state(env)
         raw_probs = self.numpy_net.forward(state_4d, return_cache=False).reshape(-1)
@@ -1237,20 +1851,32 @@ class CNNAgent(BaseAgent):
             steps += 1
 
         if sim_env.is_terminal():
-            return float(sim_env.result(root_player))
+            return float(sim_env.result(perspective=1))
 
-        # Đánh giá nhanh thế cờ cuối rollout dựa trên các nước đi vừa phát sinh
-        my_score = 0.0
-        opp_score = 0.0
-        opp_root = -root_player
-        for m in sim_env.history[-4:]:
-            p_m = int(board[m // n, m % n])
-            t_val = evaluate_cell_threat(sim_env, m, p_m)["score"]
-            if p_m == root_player:
-                my_score += t_val
-            elif p_m == opp_root:
-                opp_score += t_val
-        return float(math.tanh((my_score - 1.05 * opp_score) / 4000.0))
+        leaf_score = evaluate_board(sim_env, perspective=1, consider_turn=True)
+        return float(math.tanh(leaf_score / 12000.0))
+
+    def _build_puct_priors(
+        self,
+        env: CaroEnv,
+        candidates: list[int],
+        prior_probs: np.ndarray | None = None,
+        max_branch: int = 12,
+    ) -> list[tuple[int, float]]:
+        """Trả về danh sách `(action, prior)` của top-K ứng viên mạnh nhất theo mạng CNN."""
+        if not candidates:
+            return []
+        probs = (
+            prior_probs
+            if prior_probs is not None
+            else self.predict_probs(env, restrict_to_candidates=(self.candidate_radius is not None))
+        )
+        k = min(len(candidates), max_branch)
+        ranked_indices = np.argsort(probs[candidates])[::-1][:k]
+        top_actions = [int(candidates[idx]) for idx in ranked_indices]
+        raw_p = np.array([max(1e-6, float(probs[a])) for a in top_actions], dtype=np.float64)
+        raw_p /= float(np.sum(raw_p))
+        return [(act, float(p)) for act, p in zip(top_actions, raw_p)]
 
     def _select_action_mix_mcts(
         self,
@@ -1260,35 +1886,33 @@ class CNNAgent(BaseAgent):
         start_time: float,
     ) -> int:
         """
-        Thuật toán Mixed MCTS kết hợp Policy Network với UCT theo đúng Mục 10.4.2
-        ("Implement the Policy Network with MCTS") trong sách AlphaGo Simplified:
-
-        Công thức chọn nhánh trong mỗi lượt mô phỏng:
-            mix_score_i = v_i + C * sqrt(ln(N) / n_i) + gamma * p_i / (1 + n_i)
-        Sau khi hoàn tất các lượt rollout, chọn nước đi tối đa hóa:
-            final_score_i = v_i + gamma * p_i / (1 + n_i)
+        Cây tìm kiếm PUCT-MCTS chuẩn AlphaGo nhiều tầng định hướng bởi mạng CNN Policy:
+          - Selection: `PUCT(s, a) = Q(s, a) + c_puct * P(s, a) * sqrt(N_s + 1) / (1 + N_a)`
+            kèm First Play Urgency (FPU), chỉ thăm sâu các nhánh có prior cao từ mạng CNN.
+          - Expansion (Lazy): mở rộng top-K ứng viên theo `predict_probs` khi nút được thăm lại.
+          - Leaf Evaluation: đánh giá trực tiếp nút lá bằng `tanh(evaluate_board(..., consider_turn=True) / 12000)`
+            (không nhiễu rollout ngẫu nhiên, tốc độ cao).
+          - Backpropagation: lan truyền ngược trên toàn đường đi theo thang thưởng `[0, 1]`.
         """
-        num_cands = len(candidates)
-        if num_cands == 1:
+        if len(candidates) == 1:
             self.last_search_count = 1
             return int(candidates[0])
 
-        max_branch = min(num_cands, 10)
-        ranked_indices = np.argsort(prior_probs[candidates])[::-1][:max_branch]
-        top_candidates = [int(candidates[idx]) for idx in ranked_indices]
-        priors = np.array([float(prior_probs[a]) for a in top_candidates], dtype=np.float64)
-        prior_sum = float(np.sum(priors))
-        if prior_sum > 1e-12:
-            priors /= prior_sum
-        else:
-            priors = np.full(len(top_candidates), 1.0 / len(top_candidates), dtype=np.float64)
+        root = _PUCTNode(
+            parent=None,
+            action_from_parent=None,
+            player_just_moved=-env.current_player,
+            prior=1.0,
+        )
+        root_actions_priors = self._build_puct_priors(
+            env, candidates=candidates, prior_probs=prior_probs, max_branch=12
+        )
+        root.expand(root_actions_priors, next_player=env.current_player)
 
-        k = len(top_candidates)
-        visits = np.zeros(k, dtype=np.float64)
-        value_sums = np.zeros(k, dtype=np.float64)
-        root_player = env.current_player
-
+        c_puct = max(1.0, float(self.exploration_c))
+        inner_branch = 8
         rollouts_done = 0
+
         for rollout_idx in range(self.num_rollouts):
             if (
                 self.time_limit_sec is not None
@@ -1297,30 +1921,57 @@ class CNNAgent(BaseAgent):
             ):
                 break
 
-            if rollout_idx < k:
-                choice_idx = rollout_idx
-            else:
-                total_n = float(np.sum(visits))
-                v_i = value_sums / np.maximum(1.0, visits)
-                exploration = self.exploration_c * np.sqrt(math.log(max(1.0, total_n)) / np.maximum(1.0, visits))
-                policy_bonus = self.gamma * priors / (1.0 + visits)
-                mix_scores = v_i + exploration + policy_bonus
-                choice_idx = int(np.argmax(mix_scores))
-
-            chosen_action = top_candidates[choice_idx]
+            node = root
             sim_env = env.clone()
-            sim_env.step(chosen_action)
-            reward = self._rollout_policy_game(sim_env, root_player=root_player, root_priors=prior_probs)
 
-            visits[choice_idx] += 1.0
-            value_sums[choice_idx] += reward
+            # 1. Selection: đi sâu theo PUCT cho tới nút chưa mở rộng hoặc nút kết thúc
+            while node.is_expanded and node.children and not sim_env.is_terminal():
+                node = node.select_child_puct(c_puct)
+                sim_env.step(node.action_from_parent)
+                if node.visits == 0:
+                    break
+
+            # 2. Lazy Expansion: nếu nút này đã từng thăm (>= 1 lần) và chưa mở rộng -> mở rộng bằng CNN prior
+            if node.visits > 0 and not node.is_expanded and not sim_env.is_terminal():
+                sub_cands = (
+                    get_candidate_actions(sim_env, radius=self.candidate_radius)
+                    if self.candidate_radius is not None
+                    else sim_env.legal_actions()
+                )
+                if not sub_cands:
+                    sub_cands = sim_env.legal_actions()
+                sub_priors = self._build_puct_priors(
+                    sim_env, candidates=sub_cands, prior_probs=None, max_branch=inner_branch
+                )
+                if sub_priors:
+                    node.expand(sub_priors, next_player=sim_env.current_player)
+                    node = node.select_child_puct(c_puct)
+                    sim_env.step(node.action_from_parent)
+
+            # 3. Leaf Evaluation (chính xác và không nhiễu rollout ngẫu nhiên)
+            if sim_env.is_terminal():
+                outcome_p1 = float(sim_env.result(perspective=1))
+            else:
+                leaf_score = evaluate_board(sim_env, perspective=1, consider_turn=True)
+                outcome_p1 = float(math.tanh(leaf_score / 12000.0))
+
+            # 4. Backpropagation (thang thưởng [0, 1])
+            reward_p1 = 0.5 * (outcome_p1 + 1.0)
+            reward_p2 = 1.0 - reward_p1
+            curr: _PUCTNode | None = node
+            while curr is not None:
+                curr.visits += 1
+                curr.wins += reward_p1 if curr.player_just_moved == 1 else reward_p2
+                curr = curr.parent
+
             rollouts_done += 1
 
         self.last_search_count = rollouts_done
-        v_final = value_sums / np.maximum(1.0, visits)
-        final_scores = v_final + self.gamma * priors / (1.0 + visits)
-        best_idx = int(np.argmax(final_scores))
-        return int(top_candidates[best_idx])
+        best_child = max(
+            root.children.values(),
+            key=lambda c: (c.visits, (c.wins / c.visits) if c.visits > 0 else 0.0, c.prior),
+        )
+        return int(best_child.action_from_parent)
 
     # ------------------------------------------------------------------
     # Giao diện chính: select_action(env) -> int
@@ -1399,6 +2050,284 @@ class CNNAgent(BaseAgent):
     # Huấn luyện & Lưu / Nạp Trọng số Mô hình
     # ------------------------------------------------------------------
 
+    def _normalize_torch_inputs(self, X: np.ndarray) -> np.ndarray:
+        """Chuẩn hóa mảng đầu vào về dạng `(N, in_channels, H, W)` float32 cho PyTorch ResNet."""
+        arr = np.asarray(X, dtype=np.float32)
+        n = self.board_size
+        if arr.ndim == 4 and arr.shape[1] == self.in_channels and arr.shape[2] == n and arr.shape[3] == n:
+            return arr
+        if arr.ndim == 4 and arr.shape[1] == n and arr.shape[2] == n and arr.shape[3] == 1:
+            # Tương thích nếu truyền dữ liệu cũ (N, H, W, 1) gồm +1/-1/0
+            raw = arr[:, :, :, 0]
+            out = np.zeros((arr.shape[0], self.in_channels, n, n), dtype=np.float32)
+            out[:, 0] = (raw > 0.5).astype(np.float32)
+            out[:, 1] = (raw < -0.5).astype(np.float32)
+            out[:, 2] = (np.abs(raw) < 0.5).astype(np.float32)
+            return out
+        if arr.ndim == 3 and arr.shape[1] == n and arr.shape[2] == n:
+            out = np.zeros((arr.shape[0], self.in_channels, n, n), dtype=np.float32)
+            out[:, 0] = (arr > 0.5).astype(np.float32)
+            out[:, 1] = (arr < -0.5).astype(np.float32)
+            out[:, 2] = (np.abs(arr) < 0.5).astype(np.float32)
+            return out
+        raise ValueError(
+            f"Kích thước X không tương thích với PyTorch ResNet (in_channels={self.in_channels}, H=W={n}): {arr.shape}"
+        )
+
+    @staticmethod
+    def _normalize_class_targets(y: np.ndarray, num_classes: int) -> np.ndarray:
+        """Chuẩn hóa nhãn mục tiêu về mảng chỉ số lớp nguyên 1 chiều `(N,)`."""
+        y_arr = np.asarray(y)
+        if y_arr.ndim == 1:
+            return y_arr.astype(np.int64)
+        if y_arr.ndim == 2 and y_arr.shape[1] == 1:
+            return y_arr.reshape(-1).astype(np.int64)
+        if y_arr.ndim == 2 and y_arr.shape[1] == num_classes:
+            return np.argmax(y_arr, axis=1).astype(np.int64)
+        raise ValueError(f"Kích thước nhãn y không hợp lệ: {y_arr.shape}.")
+
+    def _evaluate_torch_arrays(
+        self,
+        X_nchw: np.ndarray,
+        y_idx: np.ndarray,
+        batch_size: int = 256,
+    ) -> dict[str, float]:
+        """Đánh giá loss, top-1, top-3 và top-5 accuracy trên tập `(X_nchw, y_idx)`."""
+        assert self.torch_model is not None
+        self.torch_model.eval()
+        n_samples = int(X_nchw.shape[0])
+        if n_samples == 0:
+            return {"loss": 0.0, "accuracy": 0.0, "top3_accuracy": 0.0, "top5_accuracy": 0.0}
+
+        total_loss = 0.0
+        top1 = 0
+        top3 = 0
+        top5 = 0
+        criterion = nn.CrossEntropyLoss(reduction="sum")
+
+        with torch.no_grad():
+            for start in range(0, n_samples, batch_size):
+                end = min(start + batch_size, n_samples)
+                xb = torch.from_numpy(X_nchw[start:end]).to(self.device)
+                yb = torch.from_numpy(y_idx[start:end]).to(self.device)
+                logits = self.torch_model(xb)
+                total_loss += float(criterion(logits, yb).item())
+                k_max = min(5, logits.shape[1])
+                topk_idx = torch.topk(logits, k=k_max, dim=1).indices
+                yb_col = yb.unsqueeze(1)
+                top1 += int((topk_idx[:, :1] == yb_col).any(dim=1).sum().item())
+                top3 += int((topk_idx[:, : min(3, k_max)] == yb_col).any(dim=1).sum().item())
+                top5 += int((topk_idx[:, :k_max] == yb_col).any(dim=1).sum().item())
+
+        return {
+            "loss": total_loss / n_samples,
+            "accuracy": top1 / n_samples,
+            "top3_accuracy": top3 / n_samples,
+            "top5_accuracy": top5 / n_samples,
+        }
+
+    def evaluate_dataset(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        batch_size: int = 256,
+    ) -> dict[str, float]:
+        """Đánh giá chất lượng dự đoán Policy Network trên tập dữ liệu độc lập (ví dụ tập Test)."""
+        y_idx = self._normalize_class_targets(y, self.num_actions)
+        if self.backend == "pytorch" and self.torch_model is not None:
+            X_nchw = self._normalize_torch_inputs(X)
+            return self._evaluate_torch_arrays(X_nchw, y_idx, batch_size=batch_size)
+
+        X_arr = np.asarray(X, dtype=np.float32)
+        if X_arr.ndim == 3:
+            X_arr = X_arr.reshape(-1, self.board_size, self.board_size, 1)
+        probs = self.numpy_net.predict(X_arr, batch_size=batch_size)
+        n_samples = len(y_idx)
+        if n_samples == 0:
+            return {"loss": 0.0, "accuracy": 0.0, "top3_accuracy": 0.0, "top5_accuracy": 0.0}
+        eps = 1e-12
+        loss = float(-np.mean(np.log(np.clip(probs[np.arange(n_samples), y_idx], eps, 1.0))))
+        ranked = np.argsort(probs, axis=1)[:, ::-1]
+        top1 = float(np.mean(ranked[:, 0] == y_idx))
+        top3 = float(np.mean(np.any(ranked[:, :3] == y_idx[:, None], axis=1)))
+        top5 = float(np.mean(np.any(ranked[:, :5] == y_idx[:, None], axis=1)))
+        return {"loss": loss, "accuracy": top1, "top3_accuracy": top3, "top5_accuracy": top5}
+
+    def evaluate_tactical_suite(self) -> dict[str, Any]:
+        """
+        Đánh giá năng lực chiến thuật THUẦN của mạng CNN (tắt `use_tactical_shortcut`) trên
+        bộ thế cờ chuẩn: Thắng-1 (ngang/dọc/chéo/đứt quãng), Chặn-1 (ngang/dọc/chéo/đứt quãng),
+        Tạo 4 mở từ 3 mở, và Chặn 3 mở của đối thủ.
+        """
+        cases: list[tuple[str, list[int], set[int]]] = [
+            # Win-in-1 (X to move)
+            ("win1_horizontal", [56, 11, 57, 12, 58, 13, 59, 14], {55, 60}),
+            ("win1_vertical", [27, 22, 38, 23, 49, 24, 60, 25], {16, 71}),
+            ("win1_diagonal", [24, 10, 36, 21, 48, 32, 60, 43], {12, 72}),
+            ("win1_gapped", [56, 11, 57, 12, 59, 13, 60, 14], {58}),
+            # Block-in-1 (O to move after X's 4th stone)
+            ("block1_horizontal", [56, 11, 57, 12, 58, 13, 59], {55, 60}),
+            ("block1_vertical", [27, 22, 38, 23, 49, 24, 60], {16, 71}),
+            ("block1_diagonal", [24, 10, 36, 21, 48, 32, 60], {12, 72}),
+            ("block1_gapped", [56, 11, 57, 12, 59, 13, 60], {58}),
+            # Create open-4 from open-3 (X to move)
+            ("open3_attack_h", [59, 22, 60, 23, 61, 34], {58, 62}),
+            ("open3_attack_d", [48, 22, 60, 23, 72, 34], {36, 84}),
+            # Block opponent open-3 (O to move)
+            ("open3_block_h", [59, 22, 60, 23, 61], {58, 62}),
+            ("open3_block_d", [48, 22, 60, 23, 72], {36, 84}),
+        ]
+
+        details: list[dict[str, Any]] = []
+        passed = 0
+        prob_sum = 0.0
+        for name, moves, expected_set in cases:
+            env = CaroEnv(board_size=self.board_size, win_length=5)
+            for mv in moves:
+                env.step(mv)
+            probs = self.predict_probs(env, restrict_to_candidates=False)
+            top_act = int(np.argmax(probs))
+            target_prob = float(sum(probs[a] for a in expected_set))
+            ok = top_act in expected_set
+            if ok:
+                passed += 1
+            prob_sum += target_prob
+            details.append(
+                {
+                    "case": name,
+                    "top_action": top_act,
+                    "expected": sorted(expected_set),
+                    "passed": ok,
+                    "target_prob": round(target_prob, 4),
+                    "top_prob": round(float(probs[top_act]), 4),
+                }
+            )
+
+        return {
+            "passed": passed,
+            "total": len(cases),
+            "pass_rate": passed / len(cases),
+            "mean_target_prob": prob_sum / len(cases),
+            "details": details,
+        }
+
+    def _train_pytorch(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        epochs: int = 20,
+        batch_size: int = 128,
+        validation_split: float = 0.1,
+        validation_data: tuple[np.ndarray, np.ndarray] | None = None,
+        learning_rate: float | None = None,
+        label_smoothing: float = 0.02,
+        verbose: int = 1,
+    ) -> dict[str, list[float]]:
+        """Huấn luyện Residual Policy CNN bằng PyTorch với AdamW + CosineAnnealingLR + Best-Val restore."""
+        assert self.torch_model is not None
+        X_all = self._normalize_torch_inputs(X)
+        y_all = self._normalize_class_targets(y, self.num_actions)
+
+        if validation_data is not None:
+            X_train, y_train = X_all, y_all
+            X_val = self._normalize_torch_inputs(validation_data[0])
+            y_val = self._normalize_class_targets(validation_data[1], self.num_actions)
+        elif 0.0 < validation_split < 1.0 and X_all.shape[0] >= 10:
+            n_val = max(1, int(round(X_all.shape[0] * validation_split)))
+            perm = self.rng.permutation(X_all.shape[0])
+            val_idx, tr_idx = perm[:n_val], perm[n_val:]
+            X_train, y_train = X_all[tr_idx], y_all[tr_idx]
+            X_val, y_val = X_all[val_idx], y_all[val_idx]
+        else:
+            X_train, y_train = X_all, y_all
+            X_val, y_val = None, None
+
+        lr = float(learning_rate) if learning_rate is not None else self.learning_rate
+        optimizer = torch.optim.AdamW(
+            self.torch_model.parameters(),
+            lr=lr,
+            weight_decay=self.weight_decay,
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, int(epochs)),
+            eta_min=lr * 0.05,
+        )
+        criterion = nn.CrossEntropyLoss(label_smoothing=float(label_smoothing))
+
+        history: dict[str, list[float]] = {
+            "loss": [],
+            "accuracy": [],
+            "top3_accuracy": [],
+        }
+        if X_val is not None and len(y_val) > 0:
+            history["val_loss"] = []
+            history["val_accuracy"] = []
+            history["val_top3_accuracy"] = []
+
+        best_val_loss = math.inf
+        best_state: dict[str, Any] | None = None
+        n_train = int(X_train.shape[0])
+
+        for epoch in range(1, int(epochs) + 1):
+            self.torch_model.train()
+            perm = self.rng.permutation(n_train)
+            tr_loss_sum = 0.0
+            tr_top1 = 0
+            tr_top3 = 0
+
+            for start in range(0, n_train, batch_size):
+                idx = perm[start : start + batch_size]
+                xb = torch.from_numpy(X_train[idx]).to(self.device)
+                yb = torch.from_numpy(y_train[idx]).to(self.device)
+
+                optimizer.zero_grad(set_to_none=True)
+                logits = self.torch_model(xb)
+                loss = criterion(logits, yb)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.torch_model.parameters(), max_norm=1.0)
+                optimizer.step()
+
+                bs = int(yb.shape[0])
+                tr_loss_sum += float(loss.item()) * bs
+                with torch.no_grad():
+                    topk = torch.topk(logits, k=min(3, logits.shape[1]), dim=1).indices
+                    yb_col = yb.unsqueeze(1)
+                    tr_top1 += int((topk[:, :1] == yb_col).any(dim=1).sum().item())
+                    tr_top3 += int((topk == yb_col).any(dim=1).sum().item())
+
+            scheduler.step()
+            ep_loss = tr_loss_sum / max(1, n_train)
+            ep_acc = tr_top1 / max(1, n_train)
+            ep_top3 = tr_top3 / max(1, n_train)
+            history["loss"].append(ep_loss)
+            history["accuracy"].append(ep_acc)
+            history["top3_accuracy"].append(ep_top3)
+
+            if X_val is not None and y_val is not None and len(y_val) > 0:
+                val_metrics = self._evaluate_torch_arrays(X_val, y_val, batch_size=max(256, batch_size))
+                history["val_loss"].append(val_metrics["loss"])
+                history["val_accuracy"].append(val_metrics["accuracy"])
+                history["val_top3_accuracy"].append(val_metrics["top3_accuracy"])
+                if val_metrics["loss"] < best_val_loss:
+                    best_val_loss = val_metrics["loss"]
+                    best_state = copy.deepcopy(self.torch_model.state_dict())
+                if verbose:
+                    print(
+                        f"Epoch {epoch:2d}/{epochs} | "
+                        f"loss={ep_loss:.4f} acc={ep_acc:.4f} top3={ep_top3:.4f} | "
+                        f"val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']:.4f} "
+                        f"val_top3={val_metrics['top3_accuracy']:.4f}"
+                    )
+            elif verbose:
+                print(f"Epoch {epoch:2d}/{epochs} | loss={ep_loss:.4f} acc={ep_acc:.4f} top3={ep_top3:.4f}")
+
+        if best_state is not None:
+            self.torch_model.load_state_dict(best_state)
+        self.torch_model.eval()
+        self.training_history = history
+        return history
+
     def train_from_dataset(
         self,
         X: np.ndarray,
@@ -1412,8 +2341,20 @@ class CNNAgent(BaseAgent):
     ) -> dict[str, list[float]]:
         """
         Huấn luyện mạng CNN Policy Network trên tập dữ liệu `(X, y)`.
-        Hỗ trợ truyền `validation_data=(X_val, y_val)` đã tách riêng theo ván đấu.
+        Hỗ trợ đồng thời backend PyTorch (ResNet đa kênh 5B), Keras và NumPy.
         """
+        if self.backend == "pytorch" and self.torch_model is not None:
+            return self._train_pytorch(
+                X=X,
+                y=y,
+                epochs=epochs,
+                batch_size=batch_size,
+                validation_split=validation_split,
+                validation_data=validation_data,
+                learning_rate=learning_rate,
+                verbose=verbose,
+            )
+
         X_arr = np.asarray(X, dtype=np.float32)
         if X_arr.ndim == 3:
             X_arr = X_arr.reshape(-1, self.board_size, self.board_size, 1)
@@ -1522,10 +2463,27 @@ class CNNAgent(BaseAgent):
             self.save_model(save_path)
         return history
 
-    def save_model(self, path: str | Path) -> Path:
-        """Lưu mô hình ra đĩa dưới định dạng nén `.npz` (và `.keras`/`.h5` nếu dùng Keras)."""
+    def save_model(self, path: str | Path, metadata: dict[str, Any] | None = None) -> Path:
+        """Lưu mô hình ra đĩa (`.pt` cho PyTorch ResNet 5B, `.npz`/`.keras` cho NumPy/Keras)."""
         out_path = Path(path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.backend == "pytorch" and self.torch_model is not None:
+            if out_path.suffix.lower() not in (".pt", ".pth"):
+                out_path = out_path.with_suffix(".pt")
+            payload: dict[str, Any] = {
+                "format": "caro_cnn_policy_resnet_v1",
+                "model_type": self.model_type,
+                "board_size": self.board_size,
+                "in_channels": self.in_channels,
+                "res_channels": self.res_channels,
+                "num_res_blocks": self.num_res_blocks,
+                "state_dict": self.torch_model.state_dict(),
+                "training_history": self.training_history,
+                "metadata": metadata or {},
+            }
+            torch.save(payload, out_path)
+            return out_path
 
         if self.backend == "keras" and self.keras_model is not None:
             self._sync_keras_to_numpy()
@@ -1544,10 +2502,35 @@ class CNNAgent(BaseAgent):
         return out_path
 
     def load_model(self, path: str | Path) -> None:
-        """Nạp trọng số mô hình từ file `.npz`, `.keras`, hoặc `.h5`."""
+        """Nạp trọng số mô hình từ file `.pt`/`.pth` (PyTorch), `.npz` (NumPy), hoặc `.keras`/`.h5`."""
         in_path = Path(path)
         if not in_path.exists():
             raise FileNotFoundError(f"Không tìm thấy file trọng số mô hình tại: {in_path}")
+
+        if in_path.suffix.lower() in (".pt", ".pth"):
+            if not HAS_PYTORCH:
+                raise RuntimeError("Cần cài đặt PyTorch để nạp checkpoint .pt/.pth.")
+            if self.device is None:
+                self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            ckpt = torch.load(in_path, map_location=self.device, weights_only=False)
+            self.backend = "pytorch"
+            self.model_type = str(ckpt.get("model_type", "resnet"))
+            self.board_size = int(ckpt.get("board_size", self.board_size))
+            self.num_actions = self.board_size * self.board_size
+            self.in_channels = int(ckpt.get("in_channels", self.in_channels))
+            self.res_channels = int(ckpt.get("res_channels", self.res_channels))
+            self.num_res_blocks = int(ckpt.get("num_res_blocks", self.num_res_blocks))
+            self.torch_model = TorchPolicyResNet(
+                board_size=self.board_size,
+                in_channels=self.in_channels,
+                channels=self.res_channels,
+                num_res_blocks=self.num_res_blocks,
+            ).to(self.device)
+            self.torch_model.load_state_dict(ckpt["state_dict"])
+            self.torch_model.eval()
+            if isinstance(ckpt.get("training_history"), dict):
+                self.training_history = ckpt["training_history"]
+            return
 
         if in_path.suffix.lower() in (".keras", ".h5"):
             npz_companion = in_path.with_suffix(".npz")
@@ -1561,6 +2544,19 @@ class CNNAgent(BaseAgent):
                 raise RuntimeError(
                     f"Không thể nạp file {in_path} vì môi trường chưa cài TensorFlow và không có file {npz_companion}."
                 )
+
+        if self.numpy_net is None:
+            self.numpy_net = NumpyCNNPolicyNetwork(
+                board_size=self.board_size,
+                model_type="strong" if self.model_type == "resnet" else self.model_type,
+                conv_filters=self.conv_filters,
+                kernel_size=self.kernel_size,
+                dense_units=self.dense_units,
+                learning_rate=self.learning_rate,
+                weight_decay=self.weight_decay,
+                seed=self.seed,
+            )
+            self.backend = "numpy"
 
         with np.load(in_path, allow_pickle=False) as data:
             self.numpy_net.set_weights_from_dict(data)
@@ -1578,26 +2574,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Huấn luyện và đánh giá CNN Policy Network Agent (Cấp 5) cho Caro 11x11."
     )
-    parser.add_argument("--model-type", choices=["fast", "strong"], default="strong", help="Kiến trúc mạng ('fast' hoặc 'strong').")
-    parser.add_argument("--backend", choices=["auto", "keras", "numpy"], default="auto", help="Backend tính toán ('auto', 'keras', 'numpy').")
-    parser.add_argument("--games", type=int, default=200, help="Số ván đấu tự chơi Expert vs Non-Expert để sinh dữ liệu.")
+    parser.add_argument("--model-type", choices=["fast", "strong", "resnet"], default="resnet", help="Kiến trúc mạng ('fast', 'strong' hoặc 'resnet').")
+    parser.add_argument("--backend", choices=["auto", "pytorch", "keras", "numpy"], default="auto", help="Backend tính toán ('auto', 'pytorch', 'keras', 'numpy').")
+    parser.add_argument("--games", type=int, default=200, help="Số ván đấu tự chơi để sinh dữ liệu.")
     parser.add_argument("--epochs", type=int, default=15, help="Số epoch huấn luyện.")
     parser.add_argument("--batch-size", type=int, default=128, help="Kích thước mini-batch.")
-    parser.add_argument("--lr", type=float, default=1.5e-3, help="Tốc độ học (learning rate) cho Adam.")
+    parser.add_argument("--lr", type=float, default=1.5e-3, help="Tốc độ học (learning rate) cho Adam/AdamW.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed để tái lập thực nghiệm.")
     parser.add_argument(
         "--save-path",
         type=str,
         default="",
-        help="Đường dẫn lưu trọng số mô hình (mặc định: checkpoints/cnn_<model_type>_11x11.npz).",
+        help="Đường dẫn lưu trọng số mô hình (mặc định: checkpoints/05_cnn_policy_best.pt hoặc .npz).",
     )
     args = parser.parse_args()
 
-    save_target = (
-        Path(args.save_path)
-        if args.save_path
+    default_ckpt = (
+        DEFAULT_CHECKPOINT_DIR / "05_cnn_policy_best.pt"
+        if args.model_type == "resnet" or args.backend == "pytorch"
         else DEFAULT_CHECKPOINT_DIR / f"cnn_{args.model_type}_11x11.npz"
     )
+    save_target = Path(args.save_path) if args.save_path else default_ckpt
 
     print(f"[1/3] Khởi tạo CNNAgent (model_type={args.model_type}, backend={args.backend})...")
     agent = CNNAgent(
