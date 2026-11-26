@@ -25,9 +25,9 @@ from src.ui_app import (
 def test_agent_catalog_clean_naming():
     assert [item["level"] for item in AGENT_CATALOG] == [1, 2, 3, 4, 5, 6, 7]
     for item in AGENT_CATALOG:
-        for forbidden in ("5B", "6A", "7A", "7B"):
-            assert forbidden not in item["label"]
-            assert forbidden not in item["id"]
+        lv = item["level"]
+        assert item["id"].startswith(f"L{lv}_")
+        assert item["label"].startswith(f"Cấp {lv}")
 
 
 def test_ui_agent_factory_all_seven_levels():
