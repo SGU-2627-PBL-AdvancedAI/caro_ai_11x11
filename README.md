@@ -8,20 +8,7 @@ Dự án xây dựng môi trường trò chơi **Caro / Free Gomoku 11×11**, c�
 
 ---
 
-## 1. Thành viên thực hiện & Phân công đóng góp
-
-> *Ghi chú: Cập nhật đầy đủ MSSV và tỷ lệ đóng góp thực tế của nhóm (tổng đúng **100%**) trước khi đóng gói nộp bài.*
-
-| STT | Họ và tên | MSSV | Nhiệm vụ & Công việc thực hiện | Tỷ lệ đóng góp |
-|---:|---|---|---|---:|
-| 1 | **Hồ Hoàng Khang** | `<Điền MSSV>` | Thiết kế hệ thống, tích hợp tác tử AI, thực nghiệm giải đấu và viết báo cáo | `34%` |
-| 2 | **Trương Quốc Lê Huy** | `<Điền MSSV>` | Xây dựng thuật toán tìm kiếm / học máy, kiểm thử thực nghiệm và trực quan hóa | `33%` |
-| 3 | **Tô Gia Huy** | `<Điền MSSV>` | Xây dựng tác tử học sâu / học tăng cường, giao diện Streamlit và tài liệu | `33%` |
-| **Tổng** | | | | **100%** |
-
----
-
-## 2. Đặc tả bài toán (`GAME_SPEC`)
+## 1. Đặc tả bài toán (`GAME_SPEC`)
 
 - **Bàn cờ:** Kích thước $11 \times 11$ ($121$ ô, ánh xạ hành động phẳng $a = r \cdot 11 + c \in \{0, \dots, 120\}$).
 - **Tính chất trò chơi:** Đối kháng 2 người, tổng bằng không (*zero-sum*), quan sát đầy đủ (*perfect information*), tất định (*deterministic*), đánh luân phiên. Quân `X (+1)` đi trước, quân `O (-1)` đi sau.
@@ -30,7 +17,7 @@ Dự án xây dựng môi trường trò chơi **Caro / Free Gomoku 11×11**, c�
 
 ---
 
-## 3. Các cấp độ tác tử AI & Kết quả Giải đấu Round-Robin
+## 2. Các cấp độ tác tử AI & Kết quả Giải đấu Round-Robin
 
 Giải đấu chính thức trong [`src/tournament.py`](src/tournament.py) và [`notebooks/08_tournament_benchmark.ipynb`](notebooks/08_tournament_benchmark.ipynb) thi đấu **100 ván/cặp × 21 cặp = 2.100 ván mỗi chế độ** (tổng **4.200 ván Round-Robin + 320 ván Ablation = 4.520 ván**), chia đều **50/50 lượt X–O** trên 20 khai cuộc đối xứng và 5 seed `(42, 102, 202, 302, 402)`.
 
@@ -48,7 +35,7 @@ Giải đấu chính thức trong [`src/tournament.py`](src/tournament.py) và [
 
 ---
 
-## 4. Cấu trúc thư mục
+## 3. Cấu trúc thư mục
 
 ```text
 caro_ai_11x11/
@@ -87,9 +74,9 @@ caro_ai_11x11/
 
 ---
 
-## 5. Hướng dẫn cài đặt và chạy chương trình
+## 4. Hướng dẫn cài đặt và chạy chương trình
 
-### 5.1. Cài đặt môi trường (Python 3.11+)
+### 4.1. Cài đặt môi trường (Python 3.11+)
 
 ```bash
 conda create -n caro-ai python=3.11 -y
@@ -99,13 +86,13 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 5.2. Chạy kiểm thử tự động
+### 4.2. Chạy kiểm thử tự động
 
 ```bash
 pytest -v
 ```
 
-### 5.3. Chạy ứng dụng Demo Web (Người vs Máy, Máy vs Máy & Replay)
+### 4.3. Chạy ứng dụng Demo Web (Người vs Máy, Máy vs Máy & Replay)
 
 ```bash
 python main.py
@@ -120,9 +107,9 @@ Giao diện cung cấp 3 chế độ:
 
 ---
 
-## 6. Hướng dẫn huấn luyện lại và tái lập thực nghiệm
+## 5. Hướng dẫn huấn luyện lại và tái lập thực nghiệm
 
-### 6.1. Huấn luyện mạng Policy Network (Cấp 5)
+### 5.1. Huấn luyện mạng Policy Network (Cấp 5)
 
 ```bash
 python -u src/train_cnn.py \
@@ -134,7 +121,7 @@ python -u src/train_cnn.py \
   --save-path checkpoints/05_cnn_policy_best.pt
 ```
 
-### 6.2. Huấn luyện tác tử Học tăng cường (Cấp 6)
+### 5.2. Huấn luyện tác tử Học tăng cường (Cấp 6)
 
 ```bash
 python -u src/train_rl.py \
@@ -149,7 +136,7 @@ python -u src/train_rl.py \
   --log-path results/tables/06_rl_dqn6a_training_log.csv
 ```
 
-### 6.3. Tái lập Giải đấu Round-Robin & 03 Ablation
+### 5.3. Tái lập Giải đấu Round-Robin & 03 Ablation
 
 - **Qua Jupyter/Colab Notebook:** Mở [`notebooks/08_tournament_benchmark.ipynb`](notebooks/08_tournament_benchmark.ipynb), chọn `RUN_MODE = "official_100"` (hoặc `"quick"`) và chạy tuần tự các ô để sinh bảng CSV và biểu đồ vào `results/`.
 - **Qua dòng lệnh CLI:**
@@ -159,7 +146,7 @@ python -u src/train_rl.py \
 
 ---
 
-## 7. Nguồn tham khảo & Phần kế thừa
+## 6. Nguồn tham khảo & Phần kế thừa
 
 - **Phần nhóm tự thực hiện:** Xây dựng lõi `CaroEnv`, hàm lượng giá và lọc ứng viên `heuristic.py`, 7 cấp độ tác tử trong `src/agents/`, quy trình sinh dữ liệu và huấn luyện `train_cnn.py` / `train_rl.py`, bộ tổ chức giải đấu `tournament.py`, giao diện `ui_app.py`, bộ test `tests/` và hệ thống 8 notebook thực nghiệm.
 - **Thư viện sử dụng:** `NumPy`, `PyTorch`, `Pandas`, `Matplotlib`, `Streamlit`, `PyYAML`, `pytest`.
