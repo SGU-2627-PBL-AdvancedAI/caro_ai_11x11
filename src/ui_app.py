@@ -548,31 +548,16 @@ def run_ai_vs_ai_series(
     return records
 
 
-def _parse_result_a(value: Any) -> float:
-    """Chuẩn hóa kết quả ván đấu của tác tử A về thang điểm số [0.0, 0.5, 1.0]."""
-    if isinstance(value, (int, float, np.number)) and not isinstance(value, bool):
-        return float(value)
-    text = str(value).strip().lower()
-    if text in ("win", "w", "1", "1.0"):
-        return 1.0
-    if text in ("draw", "tie", "d", "0.5"):
-        return 0.5
-    if text in ("loss", "lose", "l", "0", "0.0"):
-        return 0.0
-    return float(value)
-
-
 def _build_analytics_figure(records: Sequence[dict[str, Any]]) -> Any:
     """Dựng đối tượng Matplotlib Figure 4 khung phân tích chuỗi trận Máy vs Máy."""
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
     agent_a = str(records[0]["agent_a"])
-    unique_b = list(dict.fromkeys(str(r["agent_b"]) for r in records))
-    agent_b = unique_b[0] if len(unique_b) == 1 else f"Đối thủ ({len(unique_b)} cấp)"
+    agent_b = str(records[0]["agent_b"])
     n = len(records)
 
-    scores_a = [_parse_result_a(r["result_a"]) for r in records]
+    scores_a = [float(r["result_a"]) for r in records]
     wins_a = sum(1 for s in scores_a if s == 1.0)
     draws = sum(1 for s in scores_a if s == 0.5)
     losses_a = sum(1 for s in scores_a if s == 0.0)
@@ -581,10 +566,10 @@ def _build_analytics_figure(records: Sequence[dict[str, Any]]) -> Any:
     score_b_pct = 100.0 - score_a_pct
     w_lo, w_hi = wilson_ci95(pts_a, n)
 
-    x_games = [r for r in records if (r.get("a_side") or r.get("agent_a_side")) == "X"]
-    o_games = [r for r in records if (r.get("a_side") or r.get("agent_a_side")) == "O"]
-    sx = 100.0 * sum(_parse_result_a(r["result_a"]) for r in x_games) / len(x_games) if x_games else 0.0
-    so = 100.0 * sum(_parse_result_a(r["result_a"]) for r in o_games) / len(o_games) if o_games else 0.0
+    x_games = [r for r in records if r.get("a_side") == "X"]
+    o_games = [r for r in records if r.get("a_side") == "O"]
+    sx = 100.0 * sum(float(r["result_a"]) for r in x_games) / len(x_games) if x_games else 0.0
+    so = 100.0 * sum(float(r["result_a"]) for r in o_games) / len(o_games) if o_games else 0.0
 
     all_ta: list[float] = []
     all_tb: list[float] = []
@@ -695,8 +680,8 @@ def _build_analytics_figure(records: Sequence[dict[str, Any]]) -> Any:
     # Panel 4: Độ dài ván đấu theo từng trận
     ax = axes[1, 1]
     bar_colors = [
-        "#1D4ED8" if s == 1.0 else ("#B91C1C" if s == 0.0 else "#9CA3AF")
-        for s in scores_a
+        "#1D4ED8" if r["result_a"] == 1.0 else ("#B91C1C" if r["result_a"] == 0.0 else "#9CA3AF")
+        for r in records
     ]
     ax.bar(xs, num_moves, color=bar_colors, alpha=0.88, edgecolor="#374151", linewidth=0.5)
     mean_mv = statistics.mean(num_moves)
@@ -763,7 +748,7 @@ def build_records_summary_df(records: Sequence[dict[str, Any]]) -> pd.DataFrame:
                 "x_agent": r.get("x_agent", ""),
                 "o_agent": r.get("o_agent", ""),
                 "winner_agent": r.get("winner_agent", ""),
-                "result_a": _parse_result_a(r.get("result_a", 0.5)),
+                "result_a": r.get("result_a", 0.5),
                 "num_moves": r.get("num_moves", len(r.get("history", []))),
                 "avg_ms_a": r.get("avg_ms_a", 0.0),
                 "p95_ms_a": r.get("p95_ms_a", 0.0),

@@ -132,48 +132,6 @@ def test_ai_vs_ai_series_logging_and_chart_export(tmp_path: Path):
     assert stopped == []
 
 
-def test_render_analytics_chart_supports_string_result_a_logs():
-    """Đảm bảo biểu đồ phân tích xử lý được log notebook cũ lưu `result_a` dạng chuỗi ('win'/'draw'/'loss')."""
-    legacy_records = [
-        {
-            "game_index": 1,
-            "agent_a": "Level7_AlphaGo_PUCT",
-            "agent_b": "Random",
-            "agent_a_side": "X",
-            "result_a": "win",
-            "num_moves": 9,
-            "avg_ms_a": 120.0,
-            "avg_search_a": 96.0,
-            "history": [60, 48, 61, 49, 62, 50, 63, 51, 64],
-        },
-        {
-            "game_index": 2,
-            "agent_a": "Level7_AlphaGo_PUCT",
-            "agent_b": "Level4_MCTS_UCT",
-            "agent_a_side": "O",
-            "result_a": "draw",
-            "num_moves": 14,
-            "avg_ms_a": 150.0,
-            "avg_search_a": 110.0,
-            "history": [60, 48, 61, 49],
-        },
-        {
-            "game_index": 3,
-            "agent_a": "Level7_AlphaGo_PUCT",
-            "agent_b": "Level4_MCTS_UCT",
-            "agent_a_side": "O",
-            "result_a": "loss",
-            "num_moves": 20,
-            "avg_ms_a": 180.0,
-            "avg_search_a": 120.0,
-            "history": [60, 48, 61, 49],
-        },
-    ]
-    png_bytes = render_analytics_chart_bytes(legacy_records)
-    assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
-    assert len(png_bytes) > 10_000
-
-
 def test_streamlit_app_smoke_and_navigation():
     """Kiểm tra khởi chạy ứng dụng web Streamlit không lỗi qua AppTest headless."""
     streamlit = pytest.importorskip("streamlit")
