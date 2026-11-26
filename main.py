@@ -1,4 +1,4 @@
-"""Điểm khởi chạy chính của ứng dụng Caro AI 11x11 (Người vs Máy & Máy vs Máy)."""
+"""Điểm khởi chạy chính của ứng dụng web Streamlit Caro AI 11×11 (7 Cấp độ AI)."""
 
 from __future__ import annotations
 
@@ -15,10 +15,12 @@ from src.ui_app import launch_ui
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Khởi chạy giao diện Caro AI 11x11 (7 Cấp độ AI — Người vs Máy & Máy vs Máy)."
+        description="Khởi chạy giao diện web Streamlit Caro AI 11×11 (7 Cấp độ AI — Người vs Máy, Máy vs Máy & Replay)."
     )
-    parser.parse_args()
-    launch_ui(project_root=PROJECT_ROOT)
+    parser.add_argument("--port", type=int, default=8501, help="Cổng chạy máy chủ Streamlit (mặc định: 8501).")
+    parser.add_argument("--headless", action="store_true", help="Chạy ở chế độ headless (không tự mở trình duyệt).")
+    args = parser.parse_args()
+    launch_ui(project_root=PROJECT_ROOT, port=args.port, headless=args.headless)
 
 
 if __name__ == "__main__":
