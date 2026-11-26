@@ -6,3 +6,5 @@ tqdm>=4.65.0
 pandas>=2.0.0
 imageio-ffmpeg>=0.4.9
 streamlit>=1.39.0
+torch>=2.0.0
+

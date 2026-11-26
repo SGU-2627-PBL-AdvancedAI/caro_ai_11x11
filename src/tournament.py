@@ -23,6 +23,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import ctypes
 import json
 import math
+import multiprocessing
 import os
 import platform
 import random
@@ -740,6 +741,15 @@ def _worker_init() -> None:
         pass
 
 
+def _create_worker_pool(max_workers: int) -> ProcessPoolExecutor:
+    """Khởi tạo ProcessPoolExecutor bằng phương thức `spawn` để an toàn với PyTorch trên cả Linux và Windows."""
+    return ProcessPoolExecutor(
+        max_workers=int(max_workers),
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_worker_init,
+    )
+
+
 def _build_agent_from_descriptor(desc: dict[str, Any], seed: int, project_root: str) -> Any:
     """Khởi tạo tác tử trong tiến trình worker từ đặc tả tuần tự hóa được (picklable)."""
     kind = desc["kind"]
@@ -1161,10 +1171,7 @@ def run_pair_match(
                 pool = executor
                 if pool is None:
                     _ensure_pythonpath(Path(root_str))
-                    own_pool = ProcessPoolExecutor(
-                        max_workers=min(int(max_workers), len(tasks)),
-                        initializer=_worker_init,
-                    )
+                    own_pool = _create_worker_pool(min(int(max_workers), len(tasks)))
                     pool = own_pool
                 try:
                     futures = [pool.submit(_play_game_worker, t) for t in tasks]
@@ -1293,7 +1300,7 @@ def run_round_robin(
     if workers > 1 and needs_work:
         _ensure_pythonpath(root)
     shared_pool: ProcessPoolExecutor | None = (
-        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init)
+        _create_worker_pool(workers)
         if (workers > 1 and needs_work)
         else None
     )
@@ -1634,7 +1641,7 @@ def run_ablation_alphabeta_depth(
     if workers > 1:
         _ensure_pythonpath(root)
     pool: ProcessPoolExecutor | None = (
-        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init) if workers > 1 else None
+        _create_worker_pool(workers) if workers > 1 else None
     )
     try:
         for d in depths:
@@ -1716,7 +1723,7 @@ def run_ablation_mcts_budget_heuristic(
     if workers > 1:
         _ensure_pythonpath(root)
     pool: ProcessPoolExecutor | None = (
-        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init) if workers > 1 else None
+        _create_worker_pool(workers) if workers > 1 else None
     )
     try:
         for cfg_id, n_roll, r_pol, use_h_leaf in configs:
@@ -1877,7 +1884,7 @@ def run_ablation_policy_vs_search(
     if workers > 1:
         _ensure_pythonpath(root)
     pool: ProcessPoolExecutor | None = (
-        ProcessPoolExecutor(max_workers=workers, initializer=_worker_init) if workers > 1 else None
+        _create_worker_pool(workers) if workers > 1 else None
     )
     rows: list[dict[str, Any]] = []
     try:
