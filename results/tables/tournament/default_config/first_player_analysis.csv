@@ -1,9 +1,9 @@
 ﻿mode,agent_id,games_as_X,score_as_X_pct,games_as_O,score_as_O_pct,delta_X_minus_O_pp
-default_config,L1_Random,12,0.0,12,0.0,0.0
-default_config,L2_RuleBased,12,83.33,12,70.83,12.5
-default_config,L3_Minimax,12,75.0,12,62.5,12.5
-default_config,L4_MCTS,12,79.17,12,41.67,37.5
-default_config,L5_CNN,12,62.5,12,45.83,16.67
-default_config,L6_RL,12,25.0,12,16.67,8.33
-default_config,L7_AlphaGo,12,79.17,12,58.33,20.83
-default_config,ALL_GAMES_OVERALL,84,57.74,84,42.26,15.48
+default_config,L1_Random,300,0.0,300,0.0,0.0
+default_config,L2_RuleBased,300,82.17,300,58.33,23.83
+default_config,L3_Minimax,300,78.0,300,63.17,14.83
+default_config,L4_MCTS,300,74.5,300,54.83,19.67
+default_config,L5_CNN,300,62.67,300,43.83,18.83
+default_config,L6_RL,300,29.67,300,17.67,12.0
+default_config,L7_AlphaGo,300,77.67,300,57.5,20.17
+default_config,ALL_GAMES_OVERALL,2100,57.81,2100,42.19,15.62

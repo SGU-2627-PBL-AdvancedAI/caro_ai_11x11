@@ -1,8 +1,8 @@
 {
   "mode": "time_budget",
-  "games_per_pair": 4,
+  "games_per_pair": 100,
   "total_pairs": 21,
-  "total_games": 84,
+  "total_games": 2100,
   "time_budget_sec": 0.2,
   "seeds": [
     42,
@@ -12,19 +12,19 @@
     402
   ],
   "opening_book_size": 20,
-  "max_workers": 4,
-  "elapsed_sec": 0.06,
-  "peak_rss_mb": 308.81,
+  "max_workers": 8,
+  "elapsed_sec": 669.24,
+  "peak_rss_mb": 313.59,
   "overall_first_player": {
-    "x_wins": 50,
-    "o_wins": 30,
-    "draws": 4,
-    "x_score_pct": 61.9,
+    "x_wins": 1184,
+    "o_wins": 787,
+    "draws": 129,
+    "x_score_pct": 59.45,
     "x_score_wilson_ci95": [
-      51.22,
-      71.55
+      57.34,
+      61.53
     ],
-    "x_minus_o_win_pp": 23.81
+    "x_minus_o_win_pp": 18.9
   },
   "game_spec": {
     "game_name": "Caro / Free Gomoku 11x11",
@@ -38,7 +38,7 @@
     "draw_condition": "Bàn cờ đầy 121 nước không có bên nào đủ 5 quân liên tiếp"
   },
   "hardware": {
-    "timestamp_utc": "2026-11-25T23:37:57.259713+00:00",
+    "timestamp_utc": "2026-11-26T09:10:50.353027+00:00",
     "os": "Windows 10 (AMD64)",
     "processor": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
     "cpu_cores_logical": 20,
@@ -48,7 +48,7 @@
     "torch_version": "2.15.0+cpu",
     "compute_device": "CPU-only",
     "vram_total_mb": 0.0,
-    "process_rss_mb": 305.55
+    "process_rss_mb": 306.88
   },
   "agents": [
     {
