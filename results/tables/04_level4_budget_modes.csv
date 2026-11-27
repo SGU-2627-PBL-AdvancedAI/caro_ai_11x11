@@ -1,0 +1,4 @@
+﻿budget_mode,selected_action,actual_rollouts,move_time_ms
+Fixed Rollouts (N=250),58,250,91.35
+Fixed Time (0.4s),58,813,400.26
+"Hybrid (N=500, 0.4s)",58,500,350.67

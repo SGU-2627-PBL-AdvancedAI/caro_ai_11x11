@@ -1,0 +1,11 @@
+﻿depth,config,action,completed_depth,nodes,tt_hits,time_ms
+d=2,No-AB + No-MO,58,2,570,0,52.39
+d=2,No-AB + MO,58,2,570,0,54.91
+d=2,AB + No-MO,58,2,88,0,6.68
+d=2,AB + MO (NoTT),58,2,88,0,9.85
+d=2,AB + MO + TT,58,2,88,0,9.18
+d=3,No-AB + No-MO,58,3,14696,0,1283.39
+d=3,No-AB + MO,58,3,14696,0,1317.16
+d=3,AB + No-MO,58,3,1026,0,82.69
+d=3,AB + MO (NoTT),58,3,718,0,64.21
+d=3,AB + MO + TT,58,3,718,172,50.2

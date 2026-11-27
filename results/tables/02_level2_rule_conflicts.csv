@@ -1,0 +1,6 @@
+﻿scenario,selected,expected,decision_stage,time_ms,passed
+Conflict-1: Own Win-1 vs Opp Win-1 -> Rule-1,4,[4],Rule-1: immediate win,0.92,True
+Conflict-2: Own Open-4 vs Opp Open-4 -> Rule-3,58,"[58, 62]",Rule-3: create open four,1.2,True
+Conflict-3: Opp Open-4 vs Own Double-3 -> Rule-4 Block,28,"[24, 28]",Rule-4: block open four or winning fork,1.39,True
+Tactic: Win-in-1 (gapped X X _ X X),58,[58],Rule-1: immediate win,1.14,True
+Tactic: Block Win-in-1,60,"[55, 60]",Rule-2: block immediate win,0.84,True

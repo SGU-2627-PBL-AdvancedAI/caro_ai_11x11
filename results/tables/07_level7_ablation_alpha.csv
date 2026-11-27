@@ -1,0 +1,5 @@
+﻿value_blend_alpha,mode,selected_action,simulations,cache_hits,top1_visits,top1_q_mcts,top1_prior,move_time_ms
+0.0,Policy+Heur,62,150,0,89,1.0,0.4888,53.3
+0.25,Hybrid AlphaGo,62,150,0,91,1.0,0.4888,108.96
+0.5,Hybrid AlphaGo,62,150,0,92,1.0,0.4888,75.8
+1.0,Pure Neural (5B+6A),62,150,0,118,0.9621,0.4888,145.1

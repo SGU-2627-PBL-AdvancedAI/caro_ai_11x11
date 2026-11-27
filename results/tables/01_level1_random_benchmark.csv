@@ -1,0 +1,3 @@
+﻿matchup,games,wins,draws,losses,score_pct,ci95_low,ci95_high,as_X,as_O,x_win_pct,o_win_pct,avg_moves,avg_ms,p95_ms,avg_search,elapsed_sec
+Random(uniform) vs Random(uniform),60,33,0,27,55.0,42.49,66.91,17W-0D-13L,16W-0D-14L,51.7,48.3,65.38,0.004,0.007,1.0,0.04
+Random(local_r2) vs Random(uniform),60,26,0,34,43.33,31.57,55.9,12W-0D-18L,14W-0D-16L,46.7,53.3,68.9,0.015,0.02,1.0,0.06

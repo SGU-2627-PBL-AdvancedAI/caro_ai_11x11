@@ -1,0 +1,4 @@
+﻿matchup,games,wins,draws,losses,score_pct,ci95_low,ci95_high,as_X,as_O,x_win_pct,o_win_pct,avg_moves,avg_ms,p95_ms,avg_search,elapsed_sec
+Lv2 (root_width=8) vs Lv1 Random,16,16,0,0,100.0,80.64,100.0,8W-0D-0L,8W-0D-0L,50.0,50.0,9.88,10.337,24.555,440.66,0.86
+Lv2 (root_width=8) vs Lv2 (root_width=4),12,6,5,1,70.83,42.84,88.73,0W-5D-1L,6W-0D-0L,0.0,58.3,65.92,12.702,24.912,635.24,7.59
+Lv2 Self-Play (tie_break_eps=1e-6),12,6,0,6,50.0,25.38,74.62,0W-0D-6L,6W-0D-0L,0.0,100.0,28.0,12.038,24.429,575.9,4.23

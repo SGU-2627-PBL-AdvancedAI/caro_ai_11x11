@@ -1,6 +1,0 @@
-﻿matchup,games,avg_moves,avg_A_ms,avg_B_ms,avg_A_search_count,avg_B_search_count
-1. Strong Pure CNN (No Tactical) vs Random,100,17.17,0.516,0.012,1.0,1.0
-2. Fast Hybrid CNN vs Non-Expert (50%),100,19.81,0.689,0.253,22.135,52.653
-3. Strong Hybrid CNN vs Non-Expert (50%),100,20.59,0.67,0.242,23.56,53.143
-4. Strong Hybrid CNN vs Fast Hybrid CNN,100,52.84,0.765,0.78,21.256,19.874
-5. Strong CNN + Mixed MCTS vs Strong Hybrid CNN,100,45.21,31.473,0.964,37.817,23.709

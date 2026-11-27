@@ -1,0 +1,4 @@
+﻿num_rollouts,selected_action,is_open4_move,root_children,top1_visits,top1_value,move_time_ms
+50,58,True,5,13,0.9247,27.45
+150,62,True,8,28,0.86,99.77
+300,62,True,10,56,0.9207,196.11

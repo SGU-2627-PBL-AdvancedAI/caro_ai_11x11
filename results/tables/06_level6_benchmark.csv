@@ -1,0 +1,5 @@
+﻿matchup,games,wins,draws,losses,score_pct,ci95_low,ci95_high,as_X,as_O,x_win_pct,o_win_pct,avg_moves,avg_ms,p95_ms,avg_search,elapsed_sec
+RL 6A vs Lv1 Random,10,10,0,0,100.0,72.25,100.0,5W-0D-0L,5W-0D-0L,50.0,50.0,9.9,1.159,2.283,1.0,0.06
+RL 6A (New) vs Old DQN (06_vs_lv1_best),10,10,0,0,100.0,72.25,100.0,5W-0D-0L,5W-0D-0L,50.0,50.0,10.3,1.08,1.89,1.0,0.08
+RL 6A (standard opening) vs Lv2 RuleBased,10,5,0,5,50.0,23.66,76.34,5W-0D-0L,0W-0D-5L,100.0,0.0,33.0,1.72,2.827,1.0,2.85
+RL 6A (diverse openings) vs Lv2 RuleBased,10,0,0,10,0.0,0.0,27.75,0W-0D-5L,0W-0D-5L,50.0,50.0,37.3,1.503,2.279,1.0,3.66
