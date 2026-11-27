@@ -1,23 +1,3 @@
-"""Giao diện Web Streamlit cho Caro AI 11×11 (7 Cấp độ AI — Người vs Máy, Máy vs Máy & Replay).
-
-Tính năng chính:
-- **Người vs Máy (Human vs AI):** Chọn cấp AI (Cấp 1 → Cấp 7), chọn phe X/O,
-  đánh trực tiếp trên bàn cờ gỗ 11×11 tương tác, hỗ trợ Đi lại (Undo), Ván mới,
-  Gợi ý nước đi từ Cấp 7 (AlphaGo PUCT), bảng giải thích Top nước ứng viên (Cấp 5–7),
-  và tự động lưu lịch sử `.jsonl`.
-- **Máy vs Máy (AI vs AI Arena):** Chọn độc lập 2 cấp AI bất kỳ (Cấp 1 → Cấp 7),
-  chạy 1–200 trận với tùy chọn hoán đổi X/O 50/50, khai cuộc đa dạng, xem trực tiếp
-  từng nước trên bàn cờ SVG sắc nét, lưu log `.jsonl`, hiển thị biểu đồ phân tích
-  4 khung ngay trên web và tải về PNG (180 DPI) / CSV / JSONL.
-- **Lịch sử & Replay:** Mở bất kỳ file log `.jsonl` (từ UI hoặc Giải đấu chính thức),
-  tua lại từng nước đi, bật/tắt số thứ tự nước trên quân cờ và xem thống kê chi tiết.
-
-Chạy trực tiếp:
-    streamlit run src/ui_app.py
-hoặc:
-    python main.py
-"""
-
 from __future__ import annotations
 
 from datetime import datetime

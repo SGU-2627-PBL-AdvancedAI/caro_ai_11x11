@@ -1,21 +1,3 @@
-"""Hệ thống giải đấu Round-Robin, độ đo thống kê & Ablation cho Caro 11x11 (Mục 3.5).
-
-Đáp ứng đầy đủ các yêu cầu thực nghiệm đối kháng (Mục 3.5 đề tài TTNTNC & sách
-*AlphaGo Simplified* - Mark Liu):
-- Giải đấu vòng tròn (round-robin) đầy đủ giữa tất cả 7 cấp độ AI (Cấp 1–7).
-- Cân bằng tuyệt đối 50/50 lượt đi trước (X) và đi sau (O) theo từng cặp khai cuộc đối xứng.
-- Đa seed cho các tác tử có tính ngẫu nhiên / phá hòa (`seeds = [42, 102, 202, 302, 402]`).
-- Báo cáo tối thiểu 2 chế độ minh bạch:
-  1. `time_budget`: Ngân sách thời gian cố định trên mỗi nước đi (ví dụ `0.25s/nước`).
-  2. `default_config`: Cấu hình mặc định chuẩn của từng cấp độ tác tử.
-- Độ đo đầy đủ: W/D/L, Score = (W + 0.5*D)/N, Wilson CI95, Bootstrap CI95,
-  avg_ms, p95_ms, avg_search, RAM (RSS), VRAM (nếu có GPU), thời gian huấn luyện,
-  kích thước checkpoint, Elo/Bradley-Terry, phân tích First-Player Advantage & Seed Variance.
-- Lưu log thô từng trận đấu cho **từng cặp đấu** dưới dạng `.jsonl` (hỗ trợ `resume=True`).
-- Hỗ trợ 03 thí nghiệm Ablation / Sensitivity chuẩn (Alpha-Beta & Depth, MCTS Budget &
-  Heuristic Playout, Policy-only vs Policy+PUCT vs AlphaGo Cấp 7).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -326,7 +308,7 @@ def compute_elo_ratings(
 
 
 # ---------------------------------------------------------------------------
-# 3. Định nghĩa cấu hình 7 tác tử cho 2 chế độ ngân sách (Mục 3.5)
+# 3. Định nghĩa cấu hình 7 tác tử cho 2 chế độ ngân sách 
 # ---------------------------------------------------------------------------
 
 def recommended_workers(max_cap: int = 8) -> int:
